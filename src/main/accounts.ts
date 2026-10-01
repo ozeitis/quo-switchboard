@@ -40,6 +40,7 @@ export class Accounts {
       backgroundThrottling: false, spellcheck: true, autoplayPolicy: 'no-user-gesture-required'
     } });
     view.setBackgroundColor('#ffffff');
+    view.setBorderRadius(16);
     const entry: LiveAccount = { state: { ...account, status: 'loading', unread: 0, ringing: false, inCall: false }, view, ringId: null, recovery: new RecoveryBudget() };
     this.entries.set(account.id, entry);
     this.window.contentView.addChildView(view);
@@ -118,7 +119,7 @@ export class Accounts {
     for (const [id, entry] of this.entries) {
       // Keep the renderer alive. Switching workspaces must not recreate a session.
       entry.view.setVisible(id === activeId && !overlay && entry.state.status !== 'error' && entry.state.status !== 'loading');
-      entry.view.setBounds({ x: sidebarWidth, y: 64, width: Math.max(0, width - sidebarWidth), height: Math.max(0, height - 64) });
+      entry.view.setBounds({ x: sidebarWidth, y: 64, width: Math.max(0, width - sidebarWidth - 8), height: Math.max(0, height - 72) });
     }
   }
 

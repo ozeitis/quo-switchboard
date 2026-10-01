@@ -2,6 +2,8 @@
 
 ## Local validation — October 1, 2026
 
+Version 0.2.1: the same 24 tests pass, including retained-view bounds after expanding and resizing to the minimum window size. Both bundles pass strict code-signature verification; both DMGs pass checksum verification. Native visual checks confirm a continuous sidebar/toolbar surface, rounded content corners, and fully rounded selections in both sidebar modes. Switching, opening the native creation sheet, and canceling remain functional. The packaged Apple Silicon update restores the signed-in Quo inbox and collapsed sidebar from 0.2.0.
+
 Version 0.2.0: 10 unit tests and 14 Electron desktop tests pass. Both architecture bundles pass strict code-signature verification, and both DMGs pass disk-image checksum verification. The Apple Silicon packaged build loads the native module, restores the existing signed-in Quo inbox after upgrading from 0.1.1, and records page heartbeats locally.
 
 Native click checks on macOS 27 covered name validation, create/cancel, edit with name/color prefill, save, switching, reordering, and collapsing the sidebar. The accessibility tree exposes the native controls. Intel execution, a complete accessibility/appearance matrix, real incoming-call delivery, and the 24–48-hour soak remain unverified. Ad-hoc signing does not establish Apple notarization or publisher identity.
@@ -29,7 +31,7 @@ Desktop coverage includes:
 - Simulated offline/online transitions and sleep/wake events retain an active-call fixture and probe both workspaces.
 - Both page heartbeats continue after closing the main window.
 - Canceled creation/removal, renaming, reordering, and confirmed removal keep settings and views consistent.
-- A separate native-shell integration case checks compact-rail bounds, unread/call state, notification routing while a native sheet is open, profile identity, and collapsed-state restoration. It still does not replace testing native button clicks.
+- A separate native-shell integration case checks compact-rail and resized-content bounds, unread/call state, notification routing while a native sheet is open, profile identity, and collapsed-state restoration. It still does not replace testing native button clicks.
 
 These tests do not certify native notification delivery, Quo’s actual call interface, or a provider’s session policy.
 

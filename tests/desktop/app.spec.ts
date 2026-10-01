@@ -345,6 +345,14 @@ test('the native rail resizes retained views and keeps unread and call routing w
   const bounds = await application.evaluate(({ BrowserWindow, WebContentsView }) => BrowserWindow.getAllWindows()[0]!.contentView.children.filter(view => view instanceof WebContentsView && view.webContents.getURL().startsWith('https://my.quo.com')).map(view => view.getBounds()));
   expect(bounds).toHaveLength(2);
   expect(bounds.every(bound => bound.x === 80)).toBe(true);
+  await command({ type: 'toggle-sidebar' });
+  const resized = await application.evaluate(({ BrowserWindow, WebContentsView }) => {
+    const host = BrowserWindow.getAllWindows()[0]!;
+    host.setContentSize(860, 580);
+    return { size: host.getContentSize(), bounds: host.contentView.children.filter(view => view instanceof WebContentsView && view.webContents.getURL().startsWith('https://my.quo.com')).map(view => view.getBounds()) };
+  });
+  expect(resized.bounds.every(bound => bound.x === 224 && bound.y === 64 && bound.width === resized.size[0]! - 232 && bound.height === resized.size[1]! - 72)).toBe(true);
+  await command({ type: 'toggle-sidebar' });
   await studio.evaluate(() => document.getElementById('ring')!.click());
   await expect.poll(async () => (await notifications()).length).toBeGreaterThan(0);
   // A notification also dismisses an unsaved native sheet without creating a workspace.

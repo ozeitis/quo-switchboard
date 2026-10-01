@@ -109,4 +109,5 @@ input[type="text"], input:not([type]) { width: 100%; background: var(--field); c
 body.native-shell .sidebar, body.native-shell .toolbar { visibility: hidden; pointer-events: none; }
 html.native-shell, body.native-shell { background: transparent; }
 html.native-shell { --accent: AccentColor; --text: CanvasText; --surface: Canvas; }
+body.native-shell .content { right: 8px; bottom: 8px; border-radius: 16px; }
 body.native-shell.sidebar-collapsed .content { left: 80px; }

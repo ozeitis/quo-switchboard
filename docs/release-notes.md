@@ -1,4 +1,9 @@
-Switchboard for Quo 0.2 — native workspace controls and recovery diagnostics.
+Switchboard for Quo 0.2.1 — continuous window chrome and rounded content.
+
+- One native glass surface joins the sidebar and toolbar without a vertical seam.
+- Rounded Quo content with a narrow outer gutter. Workspace selections fit within the rail and keep both corners visible.
+
+Version 0.2 introduced native workspace controls and recovery diagnostics:
 
 - Separate persistent browser profiles for each Quo workspace.
 - Native AppKit sidebar, compact workspace rail, workspace/settings sheets, semantic colors, and macOS Liquid Glass.

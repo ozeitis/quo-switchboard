@@ -113,6 +113,7 @@ static NSColor *color(NSString *name) {
 @property(weak) NSWindow *window;
 @property(weak) NSView *host;
 @property NSArray *originalAccessibilityChildren;
+@property NSView *chrome;
 @property NSView *sidebar;
 @property NSView *toolbar;
 @property NSTableView *table;
@@ -159,8 +160,13 @@ static NSColor *color(NSString *name) {
   _window.movableByWindowBackground = YES;
   _window.autorecalculatesKeyViewLoop = YES;
   CGFloat width = host.bounds.size.width, height = host.bounds.size.height;
+  // One material across the window avoids a glass edge at the toolbar junction.
+  _chrome = material(host.bounds, [[FlippedView alloc] initWithFrame:host.bounds]);
+  _chrome.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+  _chrome.accessibilityElement = NO;
+  [host addSubview:_chrome positioned:NSWindowBelow relativeTo:nil];
   FlippedView *side = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, 224, height)];
-  _sidebar = material(NSMakeRect(0, 0, 224, height), side);
+  _sidebar = side;
   _sidebar.autoresizingMask = NSViewHeightSizable;
   [host addSubview:_sidebar positioned:NSWindowAbove relativeTo:nil];
   _heading = label(@"Workspaces", NSMakeRect(22, 73, 180, 18), 11);
@@ -171,12 +177,15 @@ static NSColor *color(NSString *name) {
   _scroll = scroll;
   scroll.autoresizingMask = NSViewHeightSizable;
   scroll.hasVerticalScroller = YES;
+  scroll.autohidesScrollers = YES;
+  scroll.scrollerStyle = NSScrollerStyleOverlay;
   scroll.drawsBackground = NO;
   scroll.contentView.drawsBackground = NO;
   _table = [[NSTableView alloc] initWithFrame:scroll.bounds];
   _table.headerView = nil;
   _table.backgroundColor = NSColor.clearColor;
-  _table.style = NSTableViewStyleInset;
+  // The row supplies its own inset. Keep AppKit's extra gutters out of its width.
+  _table.style = NSTableViewStylePlain;
   _table.rowHeight = 52;
   _table.intercellSpacing = NSMakeSize(0, 4);
   _table.allowsEmptySelection = NO;
@@ -185,7 +194,8 @@ static NSColor *color(NSString *name) {
   _table.delegate = self;
   _table.accessibilityLabel = @"Workspaces";
   NSTableColumn *column = [[NSTableColumn alloc] initWithIdentifier:@"workspace"];
-  column.width = 196;
+  column.minWidth = 0;
+  column.width = 208;
   [_table addTableColumn:column];
   scroll.documentView = _table;
   NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Workspace"];
@@ -194,7 +204,8 @@ static NSColor *color(NSString *name) {
   [side addSubview:scroll];
 
   FlippedView *bar = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, width - 224, 64)];
-  _toolbar = material(NSMakeRect(224, height - 64, width - 224, 64), bar);
+  _toolbar = bar;
+  _toolbar.frame = NSMakeRect(224, height - 64, width - 224, 64);
   _toolbar.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
   [host addSubview:_toolbar positioned:NSWindowAbove relativeTo:nil];
   _title = label(@"Switchboard", NSMakeRect(58, 11, width - 416, 22), 14);
@@ -240,6 +251,7 @@ static NSColor *color(NSString *name) {
   // Electron can reorder its hosting view when a WebContentsView becomes visible.
   [_host addSubview:_sidebar positioned:NSWindowAbove relativeTo:nil];
   [_host addSubview:_toolbar positioned:NSWindowAbove relativeTo:nil];
+  [_host addSubview:_chrome positioned:NSWindowBelow relativeTo:nil];
   _updating = YES;
   BOOL collapseChanged = _collapsed != [snapshot[@"sidebarCollapsed"] boolValue];
   _collapsed = [snapshot[@"sidebarCollapsed"] boolValue];
@@ -249,7 +261,8 @@ static NSColor *color(NSString *name) {
   _toolbar.frame = NSMakeRect(inset, height - 64, width - inset, 64);
   _heading.hidden = _collapsed;
   _scroll.frame = NSMakeRect(8, _collapsed ? 72 : 103, inset - 16, MAX(100, height - (_collapsed ? 88 : 119)));
-  _table.tableColumns.firstObject.width = inset - 28;
+  _table.tableColumns.firstObject.width = _scroll.contentSize.width;
+  [_table sizeToFit];
   _collapse.accessibilityLabel = _collapsed ? @"Expand sidebar" : @"Collapse sidebar";
   _collapse.toolTip = _collapsed ? @"Expand sidebar (⌘⇧L)" : @"Collapse sidebar (⌘⇧L)";
   BOOL changed = collapseChanged || ![_accounts isEqual:snapshot[@"accounts"]] || ![_snapshot[@"activeId"] isEqual:snapshot[@"activeId"]];
@@ -280,8 +293,8 @@ static NSColor *color(NSString *name) {
 - (NSTableRowView *)tableView:(NSTableView *)table rowViewForRow:(NSInteger)row { return [[WorkspaceRow alloc] init]; }
 - (NSView *)tableView:(NSTableView *)table viewForTableColumn:(NSTableColumn *)column row:(NSInteger)row {
   NSDictionary *account = _accounts[row];
-  WorkspaceCell *cell = [[WorkspaceCell alloc] initWithFrame:NSMakeRect(0, 0, _collapsed ? 52 : 196, 52)];
-  WorkspaceAvatar *avatar = [[WorkspaceAvatar alloc] initWithFrame:NSMakeRect(_collapsed ? 10 : 5, 13, 28, 28)];
+  WorkspaceCell *cell = [[WorkspaceCell alloc] initWithFrame:NSMakeRect(0, 0, column.width, 52)];
+  WorkspaceAvatar *avatar = [[WorkspaceAvatar alloc] initWithFrame:NSMakeRect(_collapsed ? (column.width - 28) / 2 : 8, 13, 28, 28)];
   avatar.account = account;
   [cell addSubview:avatar];
   if (!_collapsed) {
@@ -296,12 +309,13 @@ static NSColor *color(NSString *name) {
   NSInteger count = [account[@"unread"] integerValue];
   BOOL calling = [account[@"ringing"] boolValue] || [account[@"inCall"] boolValue];
   if (count) {
-    WorkspaceBadge *badge = [[WorkspaceBadge alloc] initWithFrame:NSMakeRect(_collapsed ? 29 : 167, _collapsed ? 34 : 29, count > 99 ? 25 : 20, 15)];
+    CGFloat badgeWidth = count > 99 ? 25 : 20;
+    WorkspaceBadge *badge = [[WorkspaceBadge alloc] initWithFrame:NSMakeRect(column.width - badgeWidth - 4, _collapsed ? 34 : 29, badgeWidth, 15)];
     badge.text = count > 99 ? @"99+" : [NSString stringWithFormat:@"%ld", (long)count];
     [cell addSubview:badge];
   }
   if (calling) {
-    WorkspaceBadge *call = [[WorkspaceBadge alloc] initWithFrame:NSMakeRect(_collapsed ? 29 : 24, 8, 15, 15)];
+    WorkspaceBadge *call = [[WorkspaceBadge alloc] initWithFrame:NSMakeRect(_collapsed ? NSMaxX(avatar.frame) - 9 : 27, 8, 15, 15)];
     call.calling = YES;
     [cell addSubview:call];
   }
@@ -458,6 +472,7 @@ static NSColor *color(NSString *name) {
   _table.menu.delegate = nil;
   [_sidebar removeFromSuperview];
   [_toolbar removeFromSuperview];
+  [_chrome removeFromSuperview];
   _window.accessibilityChildren = _originalAccessibilityChildren;
   if (_callback) { napi_release_threadsafe_function(_callback, napi_tsfn_abort); _callback = nullptr; }
 }
