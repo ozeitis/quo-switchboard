@@ -1,0 +1,40 @@
+appId: com.ozeitis.switchboard
+productName: Switchboard
+copyright: Copyright © 2026 Oze
+directories:
+  output: release
+files:
+  - dist/**
+  - LICENSE
+  - THIRD_PARTY.md
+asar: true
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+artifactName: Switchboard-${version}-${arch}.${ext}
+mac:
+  category: public.app-category.business
+  icon: assets/icon.icns
+  identity: '-'
+  hardenedRuntime: true
+  notarize: false
+  entitlements: assets/entitlements.plist
+  entitlementsInherit: assets/entitlements.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: Allow Quo to use your microphone for calls.
+  target:
+    - dmg
+    - zip
+dmg:
+  title: Switchboard
+  contents:
+    - x: 150
+      y: 160
+    - x: 430
+      y: 160
+      type: link
+      path: /Applications
+publish: null

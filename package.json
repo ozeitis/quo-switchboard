@@ -1,0 +1,42 @@
+{
+  "name": "quo-switchboard",
+  "version": "0.1.0",
+  "description": "A Mac home for your Quo workspaces.",
+  "private": true,
+  "main": "dist/main.cjs",
+  "author": {
+    "name": "Oze",
+    "url": "https://github.com/ozeitis"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "test:desktop": "npm run build && playwright test",
+    "check": "npm run typecheck && npm test",
+    "pack": "npm run build && electron-builder --mac --dir --publish never",
+    "dist": "npm run build && electron-builder --mac dmg zip --publish never"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "26.6.3",
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ozeitis/quo-switchboard.git"
+  },
+  "homepage": "https://github.com/ozeitis/quo-switchboard#readme",
+  "bugs": {
+    "url": "https://github.com/ozeitis/quo-switchboard/issues"
+  }
+}

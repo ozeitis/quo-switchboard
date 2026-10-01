@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+  <title>Switchboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="traffic-light-space"></div>
+    <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i></span><strong>Switchboard</strong></div>
+    <div class="section-label">WORKSPACES <span id="workspace-count">0</span></div>
+    <nav aria-label="Workspaces" id="workspaces"></nav>
+    <button id="add" class="add-button"><span aria-hidden="true">＋</span> Add workspace <kbd>⌘N</kbd></button>
+    <div class="sidebar-bottom">
+      <p class="background-note"><span class="small-dot"></span> Workspaces stay open in the background</p>
+      <button id="settings" class="settings-button"><span aria-hidden="true">⚙</span> Settings <kbd>⌘,</kbd></button>
+    </div>
+  </aside>
+  <header class="toolbar">
+    <div><strong id="workspace-title">Your workspaces</strong><span id="workspace-status" class="toolbar-status">One place to stay in touch</span></div>
+    <button id="reload" class="icon-button" aria-label="Reload workspace" title="Reload workspace (⌘R)" hidden>↻</button>
+  </header>
+  <main class="content">
+    <section id="welcome" class="welcome">
+      <div class="hero-symbol" aria-hidden="true"><span></span><span></span><i></i></div>
+      <p class="eyebrow">SWITCHBOARD FOR QUO</p>
+      <h1>Your workspaces.<br>All within reach.</h1>
+      <p class="intro">Keep your Quo accounts together.<br>Switch in a keystroke. Know which workspace is calling.</p>
+      <button id="first-workspace" class="primary">Add your first workspace <span aria-hidden="true">→</span></button>
+      <div class="welcome-details"><span>Separate sign-ins</span><span>Native notifications</span><span>Open source</span></div>
+      <p class="independent">An independent app. Your calls and messages stay with Quo.</p>
+    </section>
+    <section id="loading" class="page-state" hidden><div class="spinner" aria-hidden="true"></div><h2>Opening your workspace</h2><p>Your other workspaces remain open.</p></section>
+    <section id="load-error" class="page-state" hidden><span class="error-symbol" aria-hidden="true">!</span><h2>This workspace could not load</h2><p>Check your connection, then try again. Your saved sign-in has been kept.</p><button id="retry" class="primary">Try again</button></section>
+  </main>
+  <div id="toast" role="status" hidden></div>
+  <dialog id="account-dialog" aria-labelledby="account-heading">
+    <form id="account-form">
+      <div class="dialog-heading"><div><p class="eyebrow">WORKSPACE</p><h2 id="account-heading">Add a workspace</h2></div><button type="button" class="icon-button dismiss" aria-label="Close">×</button></div>
+      <p class="dialog-description">Give it a name you recognize. Sign in to Quo in the next step.</p>
+      <label class="field-label" for="account-name">Workspace name</label>
+      <input id="account-name" name="name" maxlength="48" placeholder="e.g. Acme Studio" required autocomplete="off">
+      <fieldset class="color-field"><legend>Workspace color</legend><div id="colors"></div></fieldset>
+      <p id="account-error" class="error-text" role="alert"></p>
+      <div class="dialog-footer"><button id="remove-workspace" class="danger subtle" type="button" hidden>Remove workspace…</button><span class="spacer"></span><button type="button" class="secondary dismiss">Cancel</button><button id="save-workspace" type="submit" class="primary">Add workspace</button></div>
+    </form>
+  </dialog>
+  <dialog id="settings-dialog" aria-labelledby="settings-heading">
+    <form id="settings-form">
+      <div class="dialog-heading"><div><p class="eyebrow">SWITCHBOARD</p><h2 id="settings-heading">Settings</h2></div><button type="button" class="icon-button dismiss" aria-label="Close">×</button></div>
+      <label class="setting"><span><strong>Desktop notifications</strong><small>Show the workspace name with each notification.</small></span><input name="notifications" type="checkbox" role="switch"></label>
+      <label class="setting"><span><strong>Hide notification details</strong><small>Keep caller names and message previews private.</small></span><input name="privateNotifications" type="checkbox" role="switch"></label>
+      <label class="setting"><span><strong>Open at login</strong><small>Start Switchboard when you sign in to your Mac.</small></span><input name="launchAtLogin" type="checkbox" role="switch"></label>
+      <label class="setting"><span><strong>Answer from notifications <span class="experimental">Experimental</span></strong><small>Uses Quo’s visible answer control. May stop working when Quo changes. Leave off until tested with your accounts.</small></span><input name="experimentalAnswer" type="checkbox" role="switch"></label>
+      <div class="settings-note">Closing the window keeps workspaces running. Quitting stops them. Quo may still require you to sign in again when a session expires.</div>
+      <p id="notification-error" class="error-text" role="alert" hidden>macOS could not show a notification. Use the packaged app and check System Settings → Notifications → Switchboard.</p>
+      <p id="settings-error" class="error-text" role="alert"></p>
+      <div class="dialog-footer"><button id="test-notification" type="button" class="secondary">Test notification</button><span class="spacer"></span><button type="submit" class="primary">Save settings</button></div>
+      <div class="settings-footer"><span id="app-version"></span><button id="project" class="text-button" type="button">Source & documentation ↗</button></div>
+    </form>
+  </dialog>
+  <script src="index.js"></script>
+</body>
+</html>
