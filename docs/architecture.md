@@ -21,6 +21,8 @@ flowchart TB
 
 Settings are validated on read and write, saved through a temporary file and rename, and created with owner-only file permissions. A malformed settings file stops startup without replacing it. Browser profiles live outside the application bundle under `~/Library/Application Support/Switchboard`.
 
+Email login navigates from `my.quo.com` through Quo's production Auth0 domain, `signin.openphone.com`, and back to Quo in the same view. Keeping the browsing context intact preserves Quo's authentication transaction in session storage. The authentication origin is allowed to navigate but receives no page adapter or privileged bridge. Ordinary external links open in the browser without resetting the current workspace's call state.
+
 ## Notification flow
 
 ```mermaid

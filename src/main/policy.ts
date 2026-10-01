@@ -1,5 +1,6 @@
 const APP_ORIGINS = new Set(['https://my.quo.com', 'https://my.openphone.com']);
-const AUTH_ORIGINS = new Set(['https://auth.quo.com', 'https://auth.openphone.com']);
+// Quo's production Auth0 domain must stay in the originating browser session.
+const AUTH_ORIGINS = new Set(['https://signin.openphone.com', 'https://auth.quo.com', 'https://auth.openphone.com']);
 
 export function appOrigin(raw: string): boolean {
   try { return APP_ORIGINS.has(new URL(raw).origin); } catch { return false; }

@@ -52,8 +52,9 @@ export class Accounts {
       else void this.openExternal(url);
       return { action: 'deny' };
     });
-    contents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
-      if (!isMainFrame || isInPlace) return;
+    contents.on('did-start-navigation', (_event, url, isInPlace, isMainFrame) => {
+      // External links are canceled by the navigation guard; the current page stays alive.
+      if (!isMainFrame || isInPlace || !accountNavigation(url)) return;
       this.reset(account.id);
       entry.ringId = null;
       entry.state.ringing = false;
@@ -61,10 +62,12 @@ export class Accounts {
       entry.state.status = 'loading';
       this.changed();
     });
-    contents.on('did-finish-load', () => {
+    const finishedLoading = () => {
       if (entry.state.status === 'loading') entry.state.status = appOrigin(contents.getURL()) ? 'ready' : 'sign-in';
       this.changed();
-    });
+    };
+    contents.on('did-finish-load', finishedLoading);
+    contents.on('did-stop-loading', finishedLoading);
     contents.on('did-fail-load', (_event, code, _description, _url, mainFrame) => {
       if (mainFrame && code !== -3) this.failed(entry);
     });

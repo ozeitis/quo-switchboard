@@ -5,10 +5,12 @@ import { emptyConfig, parseConfig, partitionFor } from '../src/shared/model';
 
 test('only the exact Quo app origins receive the page bridge', () => {
   assert.equal(appOrigin('https://my.quo.com/inbox'), true);
-  for (const url of ['http://my.quo.com', 'https://my.quo.com.evil.example', 'https://quo.com', 'https://auth.quo.com', 'file:///tmp/index.html', 'javascript:alert(1)']) assert.equal(appOrigin(url), false, url);
+  for (const url of ['http://my.quo.com', 'https://my.quo.com.evil.example', 'https://quo.com', 'https://auth.quo.com', 'https://signin.openphone.com', 'file:///tmp/index.html', 'javascript:alert(1)']) assert.equal(appOrigin(url), false, url);
 });
 test('navigation and external links reject credential tricks and dangerous schemes', () => {
   assert.equal(accountNavigation('https://auth.openphone.com/login'), true);
+  assert.equal(accountNavigation('https://signin.openphone.com/authorize?connection=email'), true);
+  for (const url of ['http://signin.openphone.com', 'https://signin.openphone.com.evil.example', 'https://evil.example@signin.openphone.com']) assert.equal(accountNavigation(url), false);
   for (const url of ['https://my.quo.com@evil.example', 'https://evil.example@my.quo.com', 'https://accounts.google.com', 'file:///etc/passwd']) assert.equal(accountNavigation(url), false);
   for (const url of ['javascript:alert(1)', 'file:///tmp/a', 'data:text/html,test', 'http://example.com', 'https://user:secret@example.com']) assert.equal(externalURL(url), false);
   assert.equal(externalURL('https://example.com/docs'), true);

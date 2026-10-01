@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import type { Notification as NativeNotification } from 'electron';
 
 interface NativeRecord { notification: NativeNotification; title: string; body: string; subtitle: string; actions: string[] }
-type MainGlobal = typeof globalThis & { notificationRecords: NativeRecord[] };
+type MainGlobal = typeof globalThis & { notificationRecords: NativeRecord[]; externalOrigins: string[] };
 
 const fixture = `<!doctype html><html><head><title>Quo fixture</title></head><body>
 <h1>Quo test workspace</h1><button id="notify">Send notification</button><button id="ring">Simulate incoming call</button>
@@ -28,8 +28,10 @@ async function launch(directory: string, restoring = false): Promise<void> {
   application = await _electron.launch({ args: [resolve('.')], env: { ...process.env, SWITCHBOARD_TEST_DATA: directory } });
   window = await application.firstWindow();
   if (!restoring) await expect(window.getByRole('button', { name: 'Add your first workspace' })).toBeVisible();
-  await application.evaluate(({ app, Notification, webContents }, html) => {
+  await application.evaluate(({ app, Notification, webContents, shell }, html) => {
     (globalThis as MainGlobal).notificationRecords = [];
+    (globalThis as MainGlobal).externalOrigins = [];
+    shell.openExternal = async url => { (globalThis as MainGlobal).externalOrigins.push(new URL(url).origin); };
     Notification.prototype.show = function () {
       (globalThis as MainGlobal).notificationRecords.push({ notification: this, title: this.title, body: this.body, subtitle: this.subtitle, actions: this.actions.map(action => action.text ?? '') });
       this.emit('show');
@@ -39,7 +41,12 @@ async function launch(directory: string, restoring = false): Promise<void> {
     const attach = (contents: Electron.WebContents) => {
       if (!handled.has(contents.session)) {
         handled.add(contents.session);
-        contents.session.protocol.handle('https', () => new Response(html, { headers: { 'Content-Type': 'text/html' } }));
+        contents.session.protocol.handle('https', request => {
+          const body = new URL(request.url).origin === 'https://signin.openphone.com'
+            ? '<!doctype html><h1>Quo sign-in fixture</h1><a href="https://my.quo.com/auth/authorize?code=fixture">Complete sign-in</a>'
+            : html;
+          return new Response(body, { headers: { 'Content-Type': 'text/html' } });
+        });
       }
     };
     app.on('web-contents-created', (_event, contents) => attach(contents));
@@ -189,4 +196,43 @@ test('a detected active call blocks answering in a second workspace', async () =
   await expect(window.locator('#workspace-title')).toHaveText('Workshop');
   expect(await workshop.evaluate(() => document.body.dataset.answered)).toBeUndefined();
   expect(await studio.evaluate(() => document.body.dataset.answered)).toBe('yes');
+});
+
+for (const connection of ['email', 'Username-Password-Authentication']) {
+  test(`${connection} sign-in retains its workspace and authentication transaction`, async () => {
+    const studio = await add('Studio');
+    await studio.evaluate(() => sessionStorage.setItem('auth-transaction-fixture', 'studio'));
+    const workshop = await add('Workshop');
+    await workshop.evaluate(() => sessionStorage.setItem('auth-transaction-fixture', 'workshop'));
+    await window.getByRole('button', { name: /^Studio,/ }).click();
+    await studio.evaluate(connection => { location.href = `https://signin.openphone.com/authorize?connection=${connection}`; }, connection);
+    await expect(studio.getByRole('heading', { name: 'Quo sign-in fixture' })).toBeVisible();
+    expect(await application.evaluate(() => (globalThis as MainGlobal).externalOrigins)).toEqual([]);
+    expect(await studio.evaluate(() => sessionStorage.getItem('auth-transaction-fixture'))).toBeNull();
+    expect(await studio.evaluate(() => typeof (window as unknown as Record<string, unknown>).switchboard)).toBe('undefined');
+    // The auth provider must retain its own untouched browser Notification API.
+    expect(await studio.evaluate(() => Notification.name)).toBe('Notification');
+    await studio.getByRole('link', { name: 'Complete sign-in' }).click();
+    await expect(studio.getByRole('heading', { name: 'Quo test workspace' })).toBeVisible();
+    expect(await studio.evaluate(() => sessionStorage.getItem('auth-transaction-fixture'))).toBe('studio');
+    expect(await workshop.evaluate(() => sessionStorage.getItem('auth-transaction-fixture'))).toBe('workshop');
+    await expect(window.locator('#workspace-title')).toHaveText('Studio');
+  });
+}
+
+test('opening an external page does not hide or reset an active workspace', async () => {
+  const studio = await add('Studio');
+  await studio.getByRole('button', { name: 'Simulate incoming call' }).click();
+  await studio.getByRole('button', { name: 'Answer call' }).click();
+  await expect(window.getByRole('button', { name: /^Studio, On a call/ })).toBeVisible();
+  await studio.evaluate(() => { location.href = 'https://example.com/help'; });
+  await expect.poll(() => application.evaluate(() => (globalThis as MainGlobal).externalOrigins)).toEqual(['https://example.com']);
+  await expect(window.getByRole('button', { name: /^Studio, On a call/ })).toBeVisible();
+  // Playwright waits for a navigation commit that Electron deliberately canceled.
+  // Inspect the retained native view and live document instead.
+  const retained = await application.evaluate(async ({ BrowserWindow, WebContentsView }) => {
+    const view = BrowserWindow.getAllWindows()[0]!.contentView.children.find(view => view instanceof WebContentsView && view.webContents.getURL().startsWith('https://my.quo.com')) as Electron.WebContentsView;
+    return { visible: view.getVisible(), url: view.webContents.getURL(), hasCall: await view.webContents.executeJavaScript('!!document.querySelector("[aria-label=\\\"End call\\\"]")') };
+  });
+  expect(retained).toEqual({ visible: true, url: 'https://my.quo.com/', hasCall: true });
 });

@@ -17,6 +17,8 @@ Desktop coverage includes:
 - An old notification cannot answer a later call.
 - Ambiguous controls revoke direct answering.
 - A detected active call blocks direct answering in another workspace.
+- Both email login routes retain their workspace and session-storage transaction across the authentication origin and callback; the authentication page receives no adapter.
+- Opening an external link does not hide the workspace or clear its active-call state.
 
 These tests do not certify native notification delivery, Quo’s actual call interface, or a provider’s session policy.
 
