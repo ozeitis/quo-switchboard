@@ -1,7 +1,11 @@
-Switchboard for Quo — first public preview.
+Switchboard for Quo 0.2 — native workspace controls and recovery diagnostics.
 
 - Separate persistent browser profiles for each Quo workspace.
-- Sidebar, keyboard shortcuts, native menus, and menu-bar access.
+- Native AppKit sidebar, compact workspace rail, workspace/settings sheets, semantic colors, and macOS Liquid Glass.
+- Collapse with ⌘⇧L; unread and call indicators remain visible. Rename, recolor, and reorder without replacing sessions.
+- Bounded recovery after page failures or renderer crashes. Healthy pages stay loaded through idle and wake.
+- Local page-liveness reports under Help → Connection health. Cookie-store flushes are awaited before quitting.
+- Window position, size, and sidebar mode survive relaunch.
 - Native notifications labeled by workspace, with click routing back to the source.
 - Optional experimental answering through Quo’s existing visible controls.
 - Apple Silicon and Intel DMGs, source, checksums, and dependency inventory.

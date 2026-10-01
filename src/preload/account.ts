@@ -114,6 +114,8 @@ if (appOrigin(location.href) && process.isMainFrame) {
   });
   window.addEventListener('online', update);
   window.addEventListener('offline', update);
+  const heartbeat = () => { update(); send({ type: 'heartbeat' }); };
+  ipcRenderer.on('account:probe', heartbeat);
   window.addEventListener('DOMContentLoaded', () => {
     let pending = false;
     new MutationObserver(() => {
@@ -121,7 +123,7 @@ if (appOrigin(location.href) && process.isMainFrame) {
       pending = true;
       setTimeout(() => { pending = false; update(); }, 180);
     }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-label', 'disabled', 'aria-disabled', 'style', 'class'], characterData: true });
-    update();
-    setInterval(update, 10_000);
+    heartbeat();
+    setInterval(heartbeat, 10_000);
   });
 }

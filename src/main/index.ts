@@ -6,6 +6,9 @@ import { Accounts } from './accounts';
 import { Notifications } from './notifications';
 import { appOrigin, cleanText, RateLimit } from './policy';
 import { Store } from './store';
+import { NativeShell } from './native-shell';
+import { Health } from './health';
+import { WindowState } from './window-state';
 import { validColor, validId, validName, validPreferences, type ShellCommand, type Snapshot } from '../shared/model';
 
 app.setName('Switchboard');
@@ -19,6 +22,10 @@ let store: Store;
 let accounts: Accounts;
 let notifications: Notifications;
 let tray: Tray;
+let nativeShell: NativeShell | undefined;
+let health: Health;
+let healthTimer: ReturnType<typeof setInterval>;
+let shutdownStarted = false;
 let quitting = false;
 let quitPrompt = false;
 let overlay = false;
@@ -30,6 +37,8 @@ const releasesURL = 'https://github.com/ozeitis/quo-switchboard/releases';
 
 function snapshot(): Snapshot {
   return {
+    nativeShell: !!nativeShell,
+    sidebarCollapsed: store.value.sidebarCollapsed,
     accounts: store.value.accounts.map(account => accounts.entries.get(account.id)?.state ?? { ...account, status: 'loading', unread: 0, ringing: false, inCall: false }),
     activeId: store.value.activeId,
     preferences: store.value.preferences,
@@ -49,6 +58,7 @@ function select(id: string, focus = true): void {
   if (!accounts.entries.has(id)) return;
   store.save({ ...store.value, activeId: id });
   overlay = false;
+  nativeShell?.dismiss();
   window.webContents.send('shell:intent', 'close-overlay');
   publish();
   if (focus) { show(); accounts.entries.get(id)?.view.webContents.focus(); }
@@ -56,6 +66,11 @@ function select(id: string, focus = true): void {
 
 function intent(value: string): void {
   show();
+  if (nativeShell) {
+    if (value === 'add') nativeShell.form();
+    else if (value === 'settings') nativeShell.settings();
+    return;
+  }
   overlay = true;
   accounts.layout(store.value.activeId, overlay);
   window.webContents.focus();
@@ -64,8 +79,9 @@ function intent(value: string): void {
 
 function publish(): void {
   if (!accounts || !store || !window || window.isDestroyed()) return;
-  accounts.layout(store.value.activeId, overlay);
+  accounts.layout(store.value.activeId, overlay, nativeShell && store.value.sidebarCollapsed ? 80 : 224);
   const state = snapshot();
+  nativeShell?.update(state);
   window.webContents.send('shell:state', state);
   const active = state.accounts.find(account => account.id === state.activeId);
   window.setTitle(active ? `${active.name} — Switchboard` : 'Switchboard');
@@ -89,17 +105,20 @@ function refreshMenus(): void {
       { type: 'separator' }, { role: 'services' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }
     ] },
     { label: 'Workspace', submenu: [
-      { label: 'Add workspace…', accelerator: 'CommandOrControl+N', click: () => intent('add') },
+      { label: 'New workspace…', accelerator: 'CommandOrControl+N', enabled: store.value.accounts.length < 12, click: () => intent('add') },
+      ...(nativeShell ? [{ label: 'Edit workspace…', enabled: !!store.value.activeId, click: () => { if (store.value.activeId) { show(); nativeShell?.form(store.value.activeId); } } }] : []),
       { type: 'separator' }, ...workspaceItems,
       { type: 'separator' }, { label: 'Reload workspace', accelerator: 'CommandOrControl+R', enabled: !!store.value.activeId, click: () => { if (store.value.activeId) void accounts.reload(store.value.activeId); } }
     ] },
     { role: 'editMenu' },
     { label: 'View', submenu: [
+      ...(nativeShell ? [{ label: store.value.sidebarCollapsed ? 'Expand workspace sidebar' : 'Collapse workspace sidebar', accelerator: 'CommandOrControl+Shift+L', click: () => { void command({ type: 'toggle-sidebar' }); } }] : []),
       { label: 'Show Switchboard', click: show }, { role: 'togglefullscreen' },
       ...(!app.isPackaged ? [{ label: 'Inspect workspace', accelerator: 'CommandOrControl+Alt+I', click: () => { const id = store.value.activeId; if (id) accounts.entries.get(id)?.view.webContents.openDevTools({ mode: 'detach' }); } }] : [])
     ] },
     { role: 'windowMenu' },
     { role: 'help', submenu: [
+      { label: 'Connection health…', click: () => { void command({ type: 'health' }); } },
       { label: 'Project and documentation', click: () => { void shell.openExternal('https://github.com/ozeitis/quo-switchboard'); } },
       { label: 'Download updates…', click: () => { void shell.openExternal(releasesURL); } }
     ] }
@@ -121,6 +140,37 @@ async function command(value: unknown): Promise<void> {
   if (!value || typeof value !== 'object') throw new Error('Invalid command');
   const cmd = value as ShellCommand;
   switch (cmd.type) {
+    case 'toggle-sidebar': store.save({ ...store.value, sidebarCollapsed: !store.value.sidebarCollapsed }); break;
+    case 'new-workspace': intent('add'); break;
+    case 'settings': intent('settings'); break;
+    case 'health': {
+      health.tick();
+      const minutes = Math.floor((Date.now() - health.started) / 60_000);
+      const lines = store.value.accounts.map(account => {
+        const pulse = health.pulse(account.id);
+        const state = accounts.entries.get(account.id)?.state;
+        const age = pulse.age === null ? 'No page response yet' : `Last page response ${Math.floor(pulse.age / 1000)} seconds ago`;
+        return `${account.name}: ${state?.status ?? 'loading'}\n${age}. ${pulse.count} samples. Longest awake gap: ${Math.round(pulse.largestGap / 1000)} seconds.`;
+      });
+      await dialog.showMessageBox(window, {
+        type: 'info', message: 'Connection health',
+        detail: `This run: ${Math.floor(minutes / 60)}h ${minutes % 60}m\n\n${lines.join('\n\n') || 'Create a workspace to begin monitoring.'}\n\nThis verifies that each page responds. It cannot prove that Quo is receiving calls or syncing messages. Confirm those with a real call and message after an extended idle period.\n\n${health.writeError ? 'The local health report could not be saved.' : 'Local report: health.json in the app’s data folder. No credentials, messages, or caller details are recorded.'}`,
+        buttons: ['Done'], defaultId: 0
+      });
+      break;
+    }
+    case 'workspace-limit': throw new Error('Switchboard supports up to 12 workspaces.');
+    case 'move-up':
+    case 'move-down': {
+      if (!validId(cmd.id)) return;
+      const list = [...store.value.accounts];
+      const from = list.findIndex(account => account.id === cmd.id);
+      const to = from + (cmd.type === 'move-up' ? -1 : 1);
+      if (from < 0 || to < 0 || to >= list.length) return;
+      [list[from], list[to]] = [list[to]!, list[from]!];
+      store.save({ ...store.value, accounts: list });
+      break;
+    }
     case 'add': {
       if (!validName(cmd.name) || !validColor(cmd.color)) throw new Error('Enter a name of 1–48 characters.');
       if (store.value.accounts.length >= 12) throw new Error('This release supports up to 12 workspaces.');
@@ -181,23 +231,33 @@ if (gotLock) void app.whenReady().then(async () => {
     app.quit();
     return;
   }
+  const windowState = new WindowState(app.getPath('userData'));
   window = new BrowserWindow({
-    width: 1200, height: 800, minWidth: 860, minHeight: 580, title: 'Switchboard',
-    titleBarStyle: 'hiddenInset', backgroundColor: '#f5f5f7', show: false,
+    width: 1200, height: 800, ...windowState.bounds(), minWidth: 860, minHeight: 580, title: 'Switchboard',
+    titleBarStyle: 'hiddenInset', backgroundColor: NativeShell.enabled() ? '#00000000' : '#f5f5f7', show: false,
+    ...(NativeShell.enabled() ? { vibrancy: 'under-window' as const, visualEffectState: 'followWindow' as const } : {}),
     webPreferences: { preload: join(__dirname, 'shell-preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false }
   });
+  windowState.attach(window);
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  accounts = new Accounts(window, publish, id => notifications?.reset(id));
+  health = new Health(app.getPath('userData'));
+  accounts = new Accounts(window, publish, id => notifications?.reset(id), health);
   notifications = new Notifications(window, accounts, () => store.value.preferences, select, () => { notificationError = true; publish(); });
 
   ipcMain.handle('shell:snapshot', event => { assertShell(event); return snapshot(); });
   let commands = Promise.resolve();
-  ipcMain.handle('shell:command', (event, value: unknown) => {
-    assertShell(event);
+  const enqueue = (value: unknown): Promise<void> => {
     const result = commands.then(() => command(value));
     commands = result.catch(() => undefined);
     return result;
+  };
+  ipcMain.handle('shell:command', (event, value: unknown) => {
+    assertShell(event);
+    return enqueue(value);
+  });
+  if (NativeShell.enabled()) nativeShell = new NativeShell(window, value => {
+    void enqueue(value).catch(error => { void dialog.showMessageBox(window, { type: 'error', message: 'Could not complete that action', detail: error instanceof Error ? error.message : 'Try again.' }); });
   });
   ipcMain.on('account:event', (event, raw: unknown) => {
     const entry = [...accounts.entries.values()].find(item => item.view.webContents === event.sender);
@@ -205,8 +265,10 @@ if (gotLock) void app.whenReady().then(async () => {
     const data = raw as Record<string, unknown>;
     const accountId = entry.state.id;
     switch (data.type) {
+      case 'heartbeat': health.heartbeat(accountId); break;
       case 'state':
         if (!['ready', 'sign-in', 'offline'].includes(String(data.status)) || typeof data.inCall !== 'boolean' || typeof data.unread !== 'number' || !Number.isInteger(data.unread)) return;
+        if (entry.state.status !== data.status) health.record(data.status as 'ready' | 'sign-in' | 'offline', accountId);
         entry.state.status = data.status as 'ready' | 'sign-in' | 'offline';
         entry.state.unread = Math.max(0, Math.min(data.unread, 9999));
         entry.state.inCall = data.inCall;
@@ -246,9 +308,13 @@ if (gotLock) void app.whenReady().then(async () => {
   tray = new Tray(image);
   tray.setToolTip('Switchboard');
   tray.on('click', show);
-  window.on('resize', () => accounts.layout(store.value.activeId, overlay));
+  window.on('resize', () => { accounts.layout(store.value.activeId, overlay, nativeShell && store.value.sidebarCollapsed ? 80 : 224); nativeShell?.update(snapshot()); });
   window.on('close', event => { if (!quitting) { event.preventDefault(); window.hide(); } });
-  powerMonitor.on('resume', () => accounts.resume());
+  powerMonitor.on('suspend', () => health.suspend());
+  powerMonitor.on('resume', () => { health.resume(); accounts.resume(); });
+  healthTimer = setInterval(() => health.tick(), 30_000);
+  healthTimer.unref();
+  health.tick();
   app.on('activate', show);
   app.on('second-instance', show);
   app.setAboutPanelOptions({ applicationName: 'Switchboard for Quo', applicationVersion: app.getVersion(), copyright: 'Copyright © 2026 Oze', website: 'https://github.com/ozeitis/quo-switchboard' });
@@ -259,24 +325,31 @@ if (gotLock) void app.whenReady().then(async () => {
 
 app.on('before-quit', event => {
   if (!accounts || quitting) return;
+  event.preventDefault();
+  if (shutdownStarted) return;
   const busy = [...accounts.entries.values()].some(entry => entry.state.inCall || entry.state.ringing);
   if (busy) {
-    event.preventDefault();
     if (quitPrompt) return;
     quitPrompt = true;
     void dialog.showMessageBox(window, {
       type: 'warning', message: 'Quit while a call is active?', detail: 'Quitting disconnects every workspace and interrupts calls.',
       buttons: ['Cancel', 'Quit'], defaultId: 0, cancelId: 0
-    }).then(({ response }) => { quitPrompt = false; if (response === 1) { quitting = true; shutdown(); app.quit(); } });
+    }).then(({ response }) => { quitPrompt = false; if (response === 1) void shutdown(); });
     return;
   }
-  quitting = true;
-  shutdown();
+  void shutdown();
 });
 
-function shutdown(): void {
+async function shutdown(): Promise<void> {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  clearInterval(healthTimer);
+  nativeShell?.dispose();
   notifications?.closeAll();
-  accounts?.close();
+  await accounts?.close();
+  health?.close();
   tray?.destroy();
   if (sleepBlocker !== null) powerSaveBlocker.stop(sleepBlocker);
+  quitting = true;
+  app.quit();
 }

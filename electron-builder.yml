@@ -8,6 +8,8 @@ files:
   - LICENSE
   - THIRD_PARTY.md
 asar: true
+asarUnpack:
+  - dist/native/**
 electronFuses:
   runAsNode: false
   enableCookieEncryption: true

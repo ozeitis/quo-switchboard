@@ -37,6 +37,9 @@ async function run(command: ShellCommand): Promise<void> {
 
 function render(next: Snapshot): void {
   state = next;
+  document.body.classList.toggle('native-shell', !!state.nativeShell);
+  document.documentElement.classList.toggle('native-shell', !!state.nativeShell);
+  document.body.classList.toggle('sidebar-collapsed', !!state.nativeShell && !!state.sidebarCollapsed);
   const list = get('workspaces');
   for (const [id, row] of rows) if (!state.accounts.some(account => account.id === id)) { row.remove(); rows.delete(id); }
   state.accounts.forEach((account, index) => {
@@ -95,6 +98,7 @@ async function openDialog(dialog: HTMLDialogElement): Promise<void> {
 }
 
 function openAccount(account?: AccountState): void {
+  if (state.nativeShell && !account) { void run({ type: 'new-workspace' }); return; }
   editing = account?.id ?? null;
   get('account-heading').textContent = editing ? 'Edit workspace' : 'Add a workspace';
   get('save-workspace').textContent = editing ? 'Save changes' : 'Add workspace';
@@ -107,6 +111,7 @@ function openAccount(account?: AccountState): void {
 }
 
 function openSettings(): void {
+  if (state.nativeShell) { void run({ type: 'settings' }); return; }
   for (const [key, value] of Object.entries(state.preferences)) settingsForm.querySelector<HTMLInputElement>(`input[name="${key}"]`)!.checked = value;
   get('settings-error').textContent = '';
   void openDialog(settingsDialog).catch(() => toast('Could not open settings.'));

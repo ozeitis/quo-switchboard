@@ -1,6 +1,6 @@
 {
   "name": "quo-switchboard",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "A Mac home for your Quo workspaces.",
   "private": true,
   "main": "dist/main.cjs",
@@ -28,6 +28,7 @@
     "electron": "44.5.1",
     "electron-builder": "26.15.3",
     "esbuild": "0.28.2",
+    "node-api-headers": "1.9.0",
     "tsx": "4.23.15",
     "typescript": "7.0.2"
   },

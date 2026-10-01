@@ -106,3 +106,7 @@ input[type="text"], input:not([type]) { width: 100%; background: var(--field); c
 @media (prefers-color-scheme: dark) { :root { --sidebar: #222329; --surface: #292b31; --text: #e8e9ec; --muted: #a4a8b3; --line: #3b3e47; --hover: #30333c; --selected: #3a414e; --accent: #267be9; --field: #22242b; color: var(--text); } .hero-symbol i { background: #2f7158; } .error-text, .danger { color: #ff928c; } .ringing .workspace-meta { color: #89d0a8; } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 @media (prefers-contrast: more) { :root { --line: #85858a; --muted: #555; } @media (prefers-color-scheme: dark) { :root { --muted: #ddd; --line: #888; } } }
+body.native-shell .sidebar, body.native-shell .toolbar { visibility: hidden; pointer-events: none; }
+html.native-shell, body.native-shell { background: transparent; }
+html.native-shell { --accent: AccentColor; --text: CanvasText; --surface: Canvas; }
+body.native-shell.sidebar-collapsed .content { left: 80px; }

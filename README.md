@@ -8,18 +8,19 @@ Switchboard gives each workspace its own saved browser session and keeps them ru
 
 [Download for Mac](https://github.com/ozeitis/quo-switchboard/releases) · [How it works](docs/architecture.md) · [Security](SECURITY.md) · [Build it yourself](#development)
 
-![Switchboard’s first-launch screen](docs/images/welcome.png)
-
 > **Early preview.** Account isolation and notification routing are covered by desktop tests. Real Quo calling, identity-provider login, and long-term session retention still need field testing. Direct answering is experimental and off by default.
 
 ## What it does
 
 - Keep separate Quo accounts open at the same time.
 - Switch with the sidebar, menu bar, or **⌘1–9**.
+- Collapse the sidebar to an icon rail with **⌘⇧L**. Unread counts and call indicators stay visible.
 - See which workspace sent a desktop notification. Click to open that workspace.
 - Keep workspaces running when the window closes.
 - Preserve browser profiles across restarts and app updates.
 - Choose private notification previews, launch at login, and workspace names and colors.
+- Use native workspace sheets, context menus, keyboard selection, and macOS Liquid Glass controls.
+- Recover failed pages with bounded retries and inspect a local connection-health report.
 
 **It does not bypass Quo’s session rules.** Saved profiles avoid losing local sign-ins unnecessarily; Quo can still expire or revoke them. Switchboard does not capture passwords, replay credentials, or run its own token-refresh loop.
 
@@ -33,6 +34,8 @@ flowchart LR
   B --> N
   N --> M[macOS Notification Center]
   M --> R[Open the originating workspace]
+  S[Native AppKit sidebar / compact rail] --> A
+  S --> B
 ```
 
 Every workspace gets a persistent Chromium session and a retained `WebContentsView`. Switching changes visibility, not identity. A small sandboxed page adapter forwards notifications to Electron’s native macOS notification API. The main process assigns the account identity; the webpage cannot choose another workspace.
@@ -41,12 +44,13 @@ Every workspace gets a persistent Chromium session and a retained `WebContentsVi
 | --- | --- | --- |
 | Desktop runtime | Electron 44.5.1 / Chromium | Isolated profiles, background views, browser media support |
 | Application code | TypeScript 7.0.2 | Strict types across account state and process boundaries |
-| Shell | Semantic HTML / CSS / TypeScript | Small UI, no runtime framework dependencies |
-| Mac integration | Electron’s native window, menu, tray, notification and power APIs | System behavior where it matters |
+| Workspace controls | AppKit / Objective-C++ / Node-API | Native tables, sheets, menus, SF Symbols, semantic colors and glass |
+| Content shell | HTML / CSS / TypeScript | Welcome and failure states; Quo supplies its own interface |
+| Mac integration | Public AppKit and Electron APIs | Native window, menus, tray, notifications and power behavior |
 | Build | esbuild 0.28.2 / electron-builder 26.15.3 | Bundled app, Apple Silicon and Intel DMGs |
 | Verification | Node tests / Playwright 1.63.0 | Security boundaries and actual desktop behavior |
 
-The sidebar is web-rendered. Window controls, menus, and notifications use native macOS facilities. This is a wrapper around Quo, not a rewritten phone system. See [architecture and extension points](docs/architecture.md).
+The sidebar, toolbar, and workspace/settings sheets are native AppKit. macOS 26 and 27 supply Liquid Glass through `NSGlassEffectView` and native glass buttons; older supported systems use native vibrancy. System appearance, accent colors, and accessibility preferences drive the controls. Quo’s conversation interface remains Quo’s web app. See [architecture and extension points](docs/architecture.md).
 
 ## Install
 
@@ -77,7 +81,7 @@ Quo runs its own network services and may include its own telemetry. Browser pro
 
 ## Development
 
-Use macOS and Node.js 24 LTS or newer.
+Use macOS, Node.js 24 LTS or newer, and Xcode 26 or newer with the macOS SDK selected through `xcode-select`. The build compiles a universal Apple Silicon/Intel Node-API module from `native/shell.mm`.
 
 ```sh
 npm ci
@@ -105,6 +109,8 @@ Development uses a separate `Switchboard Development` profile directory. Package
 | Notifications | Page-created notifications are forwarded. Service-worker notifications are not rewritten by the adapter. |
 | Call detection | Based on visible, English-language accessible controls. Quo UI changes or other locales may require adapter updates. |
 | Connection status | “Workspace loaded” means the page loaded, not that Quo has confirmed its calling transport. |
+| Idle recovery | Only failed pages retry, at most five attempts per fifteen minutes. Healthy or active calls are never reloaded merely because time passed. |
+| Health report | Local page-response samples every ten seconds. It does not establish provider-side message or call delivery. |
 | Memory | All added workspaces remain loaded; inactive ones are not hibernated. |
 | Updates | Download and replace the app manually. Profiles stay outside the app bundle. |
 | Quo API / webhooks | Not required or connected in this release. Public APIs do not replace Quo’s live call engine. |

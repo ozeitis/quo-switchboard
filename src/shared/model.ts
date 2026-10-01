@@ -11,6 +11,7 @@ export interface Preferences {
 }
 export interface Config {
   version: 1;
+  sidebarCollapsed: boolean;
   accounts: Account[];
   activeId: string | null;
   preferences: Preferences;
@@ -22,6 +23,8 @@ export interface AccountState extends Account {
   inCall: boolean;
 }
 export interface Snapshot {
+  nativeShell?: boolean;
+  sidebarCollapsed?: boolean;
   accounts: AccountState[];
   activeId: string | null;
   preferences: Preferences;
@@ -30,12 +33,13 @@ export interface Snapshot {
 }
 export type ShellCommand =
   | { type: 'add'; name: string; color: Color }
-  | { type: 'select' | 'reload' | 'remove' | 'test-notification'; id: string }
+  | { type: 'select' | 'reload' | 'remove' | 'test-notification' | 'move-up' | 'move-down'; id: string }
   | { type: 'rename'; id: string; name: string; color: Color }
   | { type: 'preferences'; preferences: Preferences }
   | { type: 'overlay'; open: boolean }
-  | { type: 'open-help' };
+  | { type: 'open-help' | 'new-workspace' | 'settings' | 'health' | 'workspace-limit' | 'toggle-sidebar' };
 export type AccountEvent =
+  | { type: 'heartbeat' }
   | { type: 'notification'; id: string; title: string; body: string; tag: string; silent: boolean }
   | { type: 'notification-close'; id: string }
   | { type: 'state'; status: 'ready' | 'sign-in' | 'offline'; unread: number; inCall: boolean }
@@ -49,7 +53,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   experimentalAnswer: false,
   launchAtLogin: false
 };
-export const emptyConfig = (): Config => ({ version: 1, accounts: [], activeId: null, preferences: { ...DEFAULT_PREFERENCES } });
+export const emptyConfig = (): Config => ({ version: 1, sidebarCollapsed: false, accounts: [], activeId: null, preferences: { ...DEFAULT_PREFERENCES } });
 
 export function validId(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -75,6 +79,7 @@ export function parseConfig(value: unknown): Config {
   }
   return {
     version: 1,
+    sidebarCollapsed: v.sidebarCollapsed === true,
     accounts: v.accounts.map(a => ({ id: a.id, name: a.name.trim(), color: a.color })),
     activeId: seen.has(v.activeId ?? '') ? v.activeId : v.accounts[0]?.id ?? null,
     preferences: Object.fromEntries(Object.keys(DEFAULT_PREFERENCES).map(k => [k, v.preferences[k as keyof Preferences]])) as unknown as Preferences

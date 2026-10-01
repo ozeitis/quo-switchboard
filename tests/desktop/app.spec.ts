@@ -24,8 +24,8 @@ let application: ElectronApplication;
 let window: Page;
 let dataDirectory: string;
 
-async function launch(directory: string, restoring = false): Promise<void> {
-  application = await _electron.launch({ args: [resolve('.')], env: { ...process.env, SWITCHBOARD_TEST_DATA: directory } });
+async function launch(directory: string, restoring = false, native = false): Promise<void> {
+  application = await _electron.launch({ args: [resolve('.')], env: { ...process.env, SWITCHBOARD_TEST_DATA: directory, SWITCHBOARD_TEST_SHELL: native ? 'native' : 'html' } });
   window = await application.firstWindow();
   if (!restoring) await expect(window.getByRole('button', { name: 'Add your first workspace' })).toBeVisible();
   await application.evaluate(({ app, Notification, webContents, shell }, html) => {
@@ -51,7 +51,7 @@ async function launch(directory: string, restoring = false): Promise<void> {
     };
     app.on('web-contents-created', (_event, contents) => attach(contents));
     for (const contents of webContents.getAllWebContents()) {
-      if (contents.getType() === 'browserView') { attach(contents); contents.reload(); }
+      if (contents.getURL().startsWith('https://my.quo.com')) { attach(contents); contents.reload(); }
     }
   }, fixture);
 }
@@ -235,4 +235,131 @@ test('opening an external page does not hide or reset an active workspace', asyn
     return { visible: view.getVisible(), url: view.webContents.getURL(), hasCall: await view.webContents.executeJavaScript('!!document.querySelector("[aria-label=\\\"End call\\\"]")') };
   });
   expect(retained).toEqual({ visible: true, url: 'https://my.quo.com/', hasCall: true });
+});
+
+test('a crashed workspace recovers without losing its persistent profile or reloading its neighbor', async () => {
+  const studio = await add('Studio');
+  await studio.evaluate(() => localStorage.setItem('recovery-marker', 'preserved'));
+  const workshop = await add('Workshop');
+  await workshop.evaluate(() => { document.body.dataset.retained = 'yes'; });
+  await application.evaluate(({ webContents }) => {
+    webContents.getAllWebContents().filter(contents => contents.getURL().startsWith('https://my.quo.com')).sort((a, b) => a.id - b.id)[0]!.forcefullyCrashRenderer();
+  });
+  await expect(window.getByRole('button', { name: /^Studio, Could not load/ })).toBeVisible();
+  await expect(window.getByRole('button', { name: /^Studio, Workspace loaded/ })).toBeVisible({ timeout: 15_000 });
+  const stored = await application.evaluate(async ({ webContents }) => {
+    const first = webContents.getAllWebContents().filter(contents => contents.getURL().startsWith('https://my.quo.com')).sort((a, b) => a.id - b.id)[0]!;
+    return first.executeJavaScript('localStorage.getItem("recovery-marker")');
+  });
+  expect(stored).toBe('preserved');
+  expect(await workshop.evaluate(() => document.body.dataset.retained)).toBe('yes');
+});
+
+test('network loss and wake preserve an active call and probe every background workspace', async () => {
+  const studio = await add('Studio');
+  const workshop = await add('Workshop');
+  await studio.evaluate(() => {
+    document.getElementById('ring')!.click();
+    (document.querySelector('[aria-label="Answer call"]') as HTMLElement).click();
+    document.body.dataset.retained = 'yes';
+  });
+  await expect(window.getByRole('button', { name: /^Studio, On a call/ })).toBeVisible();
+  await application.context().setOffline(true);
+  await expect(window.getByRole('button', { name: /^Workshop, Offline/ })).toBeVisible();
+  await application.context().setOffline(false);
+  await application.evaluate(({ powerMonitor, ipcMain }) => {
+    const ids = new Set<number>();
+    (globalThis as typeof globalThis & { pulseIds: Set<number> }).pulseIds = ids;
+    ipcMain.on('account:event', (event, value) => { if (value.type === 'heartbeat') ids.add(event.sender.id); });
+    powerMonitor.emit('suspend');
+    powerMonitor.emit('resume');
+  });
+  await expect(window.getByRole('button', { name: /^Workshop, Workspace loaded/ })).toBeVisible();
+  await expect.poll(() => application.evaluate(() => (globalThis as typeof globalThis & { pulseIds: Set<number> }).pulseIds.size)).toBe(2);
+  expect(await studio.evaluate(() => document.body.dataset.retained)).toBe('yes');
+  expect(await studio.getByRole('button', { name: 'End call' }).count()).toBe(1);
+  expect(await workshop.getByRole('heading', { name: 'Quo test workspace' }).count()).toBe(1);
+});
+
+test('background pages continue heartbeats while the window is closed', async () => {
+  await add('Studio');
+  await add('Workshop');
+  await application.evaluate(({ BrowserWindow, ipcMain }) => {
+    const ids = new Set<number>();
+    (globalThis as typeof globalThis & { pulseIds: Set<number> }).pulseIds = ids;
+    ipcMain.on('account:event', (event, value) => { if (value.type === 'heartbeat') ids.add(event.sender.id); });
+    BrowserWindow.getAllWindows()[0]!.close();
+  });
+  await expect.poll(() => application.evaluate(() => (globalThis as typeof globalThis & { pulseIds: Set<number> }).pulseIds.size), { timeout: 15_000 }).toBe(2);
+  expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(false);
+});
+
+test('cancel, rename, reorder, and removal keep settings and views consistent', async () => {
+  const studio = await add('Studio');
+  await add('Workshop');
+  await window.getByRole('button', { name: /^Add workspace/ }).click();
+  await window.getByLabel('Workspace name', { exact: true }).fill('Discarded');
+  await window.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(window.getByRole('button', { name: /^Discarded,/ })).toHaveCount(0);
+  await window.getByRole('button', { name: 'Edit Studio', exact: true }).click();
+  await window.getByLabel('Workspace name', { exact: true }).fill('Renamed Studio');
+  await window.getByRole('button', { name: 'Save changes' }).click();
+  await expect(window.getByRole('button', { name: /^Renamed Studio,/ })).toBeVisible();
+  const before = JSON.parse(await readFile(join(dataDirectory, 'workspaces.json'), 'utf8'));
+  await window.evaluate(id => (window as unknown as { switchboard: { command(value: unknown): Promise<void> } }).switchboard.command({ type: 'move-down', id }), before.accounts[0].id);
+  const reordered = JSON.parse(await readFile(join(dataDirectory, 'workspaces.json'), 'utf8'));
+  expect(reordered.accounts.map((a: { name: string }) => a.name)).toEqual(['Workshop', 'Renamed Studio']);
+  expect(studio.isClosed()).toBe(false);
+  await application.evaluate(({ dialog }) => {
+    dialog.showMessageBox = (async () => ({ response: 0, checkboxChecked: false })) as typeof dialog.showMessageBox;
+  });
+  await window.evaluate(id => (window as unknown as { switchboard: { command(value: unknown): Promise<void> } }).switchboard.command({ type: 'remove', id }), before.accounts[0].id);
+  expect(JSON.parse(await readFile(join(dataDirectory, 'workspaces.json'), 'utf8')).accounts).toHaveLength(2);
+  await application.evaluate(({ dialog }) => {
+    dialog.showMessageBox = (async () => ({ response: 1, checkboxChecked: false })) as typeof dialog.showMessageBox;
+  });
+  await window.evaluate(id => (window as unknown as { switchboard: { command(value: unknown): Promise<void> } }).switchboard.command({ type: 'remove', id }), before.accounts[0].id);
+  expect(JSON.parse(await readFile(join(dataDirectory, 'workspaces.json'), 'utf8')).accounts.map((a: { name: string }) => a.name)).toEqual(['Workshop']);
+  expect(studio.isClosed()).toBe(true);
+});
+
+test('the native rail resizes retained views and keeps unread and call routing while collapsed', async () => {
+  await application.close();
+  await launch(dataDirectory, false, true);
+  const command = (value: unknown) => window.evaluate(value => (window as unknown as { switchboard: { command(value: unknown): Promise<void> } }).switchboard.command(value), value);
+  const snapshot = () => window.evaluate(() => (window as unknown as { switchboard: { snapshot(): Promise<import('../../src/shared/model').Snapshot> } }).switchboard.snapshot());
+  expect((await snapshot()).nativeShell).toBe(true);
+  const create = async (name: string): Promise<Page> => {
+    const next = application.context().waitForEvent('page');
+    await command({ type: 'add', name, color: 'blue' });
+    const page = await next;
+    await expect(page.getByRole('heading', { name: 'Quo test workspace' })).toBeVisible();
+    return page;
+  };
+  const studio = await create('Studio');
+  await create('Workshop');
+  const before = await snapshot();
+  await studio.evaluate(() => { document.title = '(7) Quo fixture'; document.body.dataset.retained = 'yes'; });
+  await command({ type: 'toggle-sidebar' });
+  await expect.poll(async () => (await snapshot()).accounts[0]?.unread).toBe(7);
+  const bounds = await application.evaluate(({ BrowserWindow, WebContentsView }) => BrowserWindow.getAllWindows()[0]!.contentView.children.filter(view => view instanceof WebContentsView && view.webContents.getURL().startsWith('https://my.quo.com')).map(view => view.getBounds()));
+  expect(bounds).toHaveLength(2);
+  expect(bounds.every(bound => bound.x === 80)).toBe(true);
+  await studio.evaluate(() => document.getElementById('ring')!.click());
+  await expect.poll(async () => (await notifications()).length).toBeGreaterThan(0);
+  // A notification also dismisses an unsaved native sheet without creating a workspace.
+  await command({ type: 'new-workspace' });
+  await application.evaluate(() => (globalThis as MainGlobal).notificationRecords.at(-1)!.notification.emit('click'));
+  await expect.poll(async () => (await snapshot()).activeId).toBe(before.accounts[0]!.id);
+  expect((await snapshot()).sidebarCollapsed).toBe(true);
+  expect((await snapshot()).accounts[0]!.ringing).toBe(true);
+  expect((await snapshot()).accounts).toHaveLength(2);
+  expect(await studio.evaluate(() => document.body.dataset.retained)).toBe('yes');
+  await studio.getByRole('button', { name: 'Answer call' }).click();
+  await studio.getByRole('button', { name: 'End call' }).click();
+  await expect.poll(async () => { const account = (await snapshot()).accounts[0]!; return account.inCall || account.ringing; }).toBe(false);
+  await application.close();
+  await launch(dataDirectory, true, true);
+  expect((await snapshot()).sidebarCollapsed).toBe(true);
+  expect((await snapshot()).accounts.map(account => account.id)).toEqual(before.accounts.map(account => account.id));
 });

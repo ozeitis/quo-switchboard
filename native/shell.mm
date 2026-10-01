@@ -1,0 +1,534 @@
+#import <AppKit/AppKit.h>
+#include <node_api.h>
+#include <string>
+
+// Build with the macOS 26 SDK or newer. Older systems retain native vibrancy.
+static NSView *material(NSRect frame, NSView *content) {
+  if (@available(macOS 26.0, *)) {
+    NSGlassEffectView *view = [[NSGlassEffectView alloc] initWithFrame:frame];
+    view.cornerRadius = 0;
+    view.contentView = content;
+    return view;
+  }
+  NSVisualEffectView *view = [[NSVisualEffectView alloc] initWithFrame:frame];
+  view.material = NSVisualEffectMaterialSidebar;
+  view.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+  view.state = NSVisualEffectStateFollowsWindowActiveState;
+  content.frame = view.bounds;
+  content.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+  [view addSubview:content];
+  return view;
+}
+
+@interface FlippedView : NSView
+@end
+@implementation FlippedView
+- (BOOL)isFlipped { return YES; }
+- (BOOL)mouseDownCanMoveWindow { return YES; }
+@end
+
+@interface WorkspaceCell : NSTableCellView
+@property NSTextField *detail;
+@end
+@implementation WorkspaceCell
+- (void)setBackgroundStyle:(NSBackgroundStyle)style {
+  [super setBackgroundStyle:style];
+  self.textField.textColor = NSColor.labelColor;
+  self.detail.textColor = NSColor.secondaryLabelColor;
+}
+@end
+
+@interface WorkspaceRow : NSTableRowView
+@end
+@implementation WorkspaceRow
+- (void)drawSelectionInRect:(NSRect)dirtyRect {
+  NSColor *tint = self.emphasized ? [NSColor.controlAccentColor colorWithAlphaComponent:0.13] : [NSColor.unemphasizedSelectedContentBackgroundColor colorWithAlphaComponent:0.6];
+  [tint setFill];
+  NSBezierPath *shape = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 2, 4) xRadius:12 yRadius:12];
+  [shape fill];
+  if (NSWorkspace.sharedWorkspace.accessibilityDisplayShouldIncreaseContrast) { [NSColor.labelColor setStroke]; shape.lineWidth = 1; [shape stroke]; }
+}
+@end
+
+static NSTextField *label(NSString *text, NSRect frame, CGFloat size) {
+  NSTextField *field = [NSTextField labelWithString:text];
+  field.frame = frame;
+  field.font = [NSFont systemFontOfSize:size];
+  field.lineBreakMode = NSLineBreakByTruncatingTail;
+  return field;
+}
+
+static NSString *status(NSDictionary *account) {
+  if ([account[@"inCall"] boolValue]) return @"On a call";
+  if ([account[@"ringing"] boolValue]) return @"Incoming call";
+  return @{@"loading": @"Opening…", @"ready": @"Workspace loaded", @"sign-in": @"Sign-in required", @"offline": @"Offline", @"error": @"Could not load"}[account[@"status"]] ?: @"";
+}
+
+static NSColor *color(NSString *name) {
+  return @{@"slate": NSColor.secondaryLabelColor, @"blue": NSColor.systemBlueColor,
+    @"green": NSColor.systemGreenColor, @"amber": NSColor.systemOrangeColor,
+    @"rose": NSColor.systemPinkColor, @"violet": NSColor.systemPurpleColor}[name] ?: NSColor.controlAccentColor;
+}
+
+@interface WorkspaceAvatar : NSView
+@property NSDictionary *account;
+@end
+@implementation WorkspaceAvatar
+- (void)drawRect:(NSRect)dirtyRect {
+  NSColor *tint = color(_account[@"color"]);
+  [[tint colorWithAlphaComponent:0.14] setFill];
+  [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:9 yRadius:9] fill];
+  NSMutableString *initials = [NSMutableString string];
+  for (NSString *word in [_account[@"name"] componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet]) {
+    if (word.length) [initials appendString:[word substringWithRange:[word rangeOfComposedCharacterSequenceAtIndex:0]]];
+    if (initials.length >= 2) break;
+  }
+  NSDictionary *attributes = @{NSFontAttributeName: [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold], NSForegroundColorAttributeName: NSColor.labelColor};
+  NSSize size = [initials.uppercaseString sizeWithAttributes:attributes];
+  [initials.uppercaseString drawAtPoint:NSMakePoint((self.bounds.size.width - size.width) / 2, (self.bounds.size.height - size.height) / 2) withAttributes:attributes];
+}
+@end
+
+@interface WorkspaceBadge : NSView
+@property NSString *text;
+@property BOOL calling;
+@end
+@implementation WorkspaceBadge
+- (void)drawRect:(NSRect)dirtyRect {
+  [(_calling ? NSColor.systemGreenColor : NSColor.systemRedColor) setFill];
+  [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:7 yRadius:7] fill];
+  if (_calling) {
+    NSImage *symbol = [NSImage imageWithSystemSymbolName:@"phone.fill" accessibilityDescription:nil];
+    symbol = [symbol imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[NSColor.whiteColor]]];
+    [symbol drawInRect:NSInsetRect(self.bounds, 3, 3)];
+    return;
+  }
+  NSDictionary *attributes = @{NSFontAttributeName: [NSFont systemFontOfSize:9 weight:NSFontWeightSemibold], NSForegroundColorAttributeName: NSColor.whiteColor};
+  NSSize size = [_text sizeWithAttributes:attributes];
+  [_text drawAtPoint:NSMakePoint((self.bounds.size.width - size.width) / 2, (self.bounds.size.height - size.height) / 2) withAttributes:attributes];
+}
+@end
+
+@interface ShellController : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate, NSTextFieldDelegate>
+@property(weak) NSWindow *window;
+@property(weak) NSView *host;
+@property NSArray *originalAccessibilityChildren;
+@property NSView *sidebar;
+@property NSView *toolbar;
+@property NSTableView *table;
+@property NSTextField *title;
+@property NSTextField *subtitle;
+@property NSButton *collapse;
+@property NSScrollView *scroll;
+@property NSTextField *heading;
+@property BOOL collapsed;
+@property NSButton *more;
+@property NSButton *add;
+@property NSDictionary *snapshot;
+@property NSArray<NSDictionary *> *accounts;
+@property NSAlert *sheet;
+@property NSTextField *nameField;
+@property BOOL updating;
+@property napi_threadsafe_function callback;
+- (void)emit:(NSDictionary *)command;
+- (void)update:(NSDictionary *)snapshot;
+- (void)form:(NSString *)identifier;
+- (void)settings;
+- (void)dismiss;
+- (void)dispose;
+@end
+
+@implementation ShellController
+- (NSButton *)button:(NSString *)title symbol:(NSString *)symbol frame:(NSRect)frame action:(SEL)action parent:(NSView *)parent {
+  NSButton *button = [NSButton buttonWithTitle:title target:self action:action];
+  button.frame = frame;
+  if (@available(macOS 26.0, *)) button.bezelStyle = NSBezelStyleGlass;
+  else button.bezelStyle = NSBezelStyleTexturedRounded;
+  button.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
+  button.imagePosition = title.length ? NSImageLeading : NSImageOnly;
+  [parent addSubview:button];
+  return button;
+}
+- (instancetype)initWithView:(NSView *)handle callback:(napi_threadsafe_function)callback {
+  if (!(self = [super init])) return nil;
+  _window = handle.window;
+  _callback = callback;
+  _accounts = @[];
+  NSView *host = _window.contentView;
+  _host = host;
+  _window.movableByWindowBackground = YES;
+  _window.autorecalculatesKeyViewLoop = YES;
+  CGFloat width = host.bounds.size.width, height = host.bounds.size.height;
+  FlippedView *side = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, 224, height)];
+  _sidebar = material(NSMakeRect(0, 0, 224, height), side);
+  _sidebar.autoresizingMask = NSViewHeightSizable;
+  [host addSubview:_sidebar positioned:NSWindowAbove relativeTo:nil];
+  _heading = label(@"Workspaces", NSMakeRect(22, 73, 180, 18), 11);
+  _heading.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
+  _heading.textColor = NSColor.secondaryLabelColor;
+  [side addSubview:_heading];
+  NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(8, 103, 208, MAX(100, height - 119))];
+  _scroll = scroll;
+  scroll.autoresizingMask = NSViewHeightSizable;
+  scroll.hasVerticalScroller = YES;
+  scroll.drawsBackground = NO;
+  scroll.contentView.drawsBackground = NO;
+  _table = [[NSTableView alloc] initWithFrame:scroll.bounds];
+  _table.headerView = nil;
+  _table.backgroundColor = NSColor.clearColor;
+  _table.style = NSTableViewStyleInset;
+  _table.rowHeight = 52;
+  _table.intercellSpacing = NSMakeSize(0, 4);
+  _table.allowsEmptySelection = NO;
+  _table.allowsMultipleSelection = NO;
+  _table.dataSource = self;
+  _table.delegate = self;
+  _table.accessibilityLabel = @"Workspaces";
+  NSTableColumn *column = [[NSTableColumn alloc] initWithIdentifier:@"workspace"];
+  column.width = 196;
+  [_table addTableColumn:column];
+  scroll.documentView = _table;
+  NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Workspace"];
+  menu.delegate = self;
+  _table.menu = menu;
+  [side addSubview:scroll];
+
+  FlippedView *bar = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, width - 224, 64)];
+  _toolbar = material(NSMakeRect(224, height - 64, width - 224, 64), bar);
+  _toolbar.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
+  [host addSubview:_toolbar positioned:NSWindowAbove relativeTo:nil];
+  _title = label(@"Switchboard", NSMakeRect(58, 11, width - 416, 22), 14);
+  _title.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
+  _title.autoresizingMask = NSViewWidthSizable;
+  [bar addSubview:_title];
+  _subtitle = label(@"Your Quo workspaces, together", NSMakeRect(58, 34, width - 416, 18), 11);
+  _subtitle.textColor = NSColor.secondaryLabelColor;
+  _subtitle.autoresizingMask = NSViewWidthSizable;
+  [bar addSubview:_subtitle];
+  _collapse = [self button:@"" symbol:@"sidebar.left" frame:NSMakeRect(12, 18, 32, 28) action:@selector(toggleSidebar:) parent:bar];
+  _collapse.toolTip = @"Collapse sidebar (⌘⇧L)";
+  _collapse.accessibilityLabel = @"Collapse sidebar";
+  _add = [self button:@"" symbol:@"plus" frame:NSMakeRect(width - 315, 18, 32, 28) action:@selector(addWorkspace:) parent:bar];
+  _add.autoresizingMask = NSViewMinXMargin;
+  _add.toolTip = @"New workspace (⌘N)";
+  _add.accessibilityLabel = @"New workspace";
+  _more = [self button:@"" symbol:@"ellipsis.circle" frame:NSMakeRect(width - 273, 18, 32, 28) action:@selector(more:) parent:bar];
+  _more.autoresizingMask = NSViewMinXMargin;
+  _more.toolTip = @"Workspace options";
+  _more.accessibilityLabel = @"Workspace options";
+  // Chromium supplies its own accessibility children. Include native siblings
+  // explicitly so VoiceOver and Full Keyboard Access can reach AppKit controls.
+  _sidebar.accessibilityElement = YES;
+  _sidebar.accessibilityRole = NSAccessibilityGroupRole;
+  _sidebar.accessibilityLabel = @"Workspace sidebar";
+  _toolbar.accessibilityElement = YES;
+  _toolbar.accessibilityRole = NSAccessibilityGroupRole;
+  _toolbar.accessibilityLabel = @"Workspace toolbar";
+  _originalAccessibilityChildren = _window.accessibilityChildren ?: @[];
+  _window.accessibilityChildren = [_originalAccessibilityChildren arrayByAddingObjectsFromArray:@[_sidebar, _toolbar]];
+  _sidebar.accessibilityParent = _window;
+  _toolbar.accessibilityParent = _window;
+  return self;
+}
+- (void)emit:(NSDictionary *)command {
+  if (!_callback) return;
+  NSData *json = [NSJSONSerialization dataWithJSONObject:command options:0 error:nil];
+  auto *data = new std::string((const char *)json.bytes, json.length);
+  if (napi_call_threadsafe_function(_callback, data, napi_tsfn_nonblocking) != napi_ok) delete data;
+}
+- (void)update:(NSDictionary *)snapshot {
+  // Electron can reorder its hosting view when a WebContentsView becomes visible.
+  [_host addSubview:_sidebar positioned:NSWindowAbove relativeTo:nil];
+  [_host addSubview:_toolbar positioned:NSWindowAbove relativeTo:nil];
+  _updating = YES;
+  BOOL collapseChanged = _collapsed != [snapshot[@"sidebarCollapsed"] boolValue];
+  _collapsed = [snapshot[@"sidebarCollapsed"] boolValue];
+  CGFloat inset = _collapsed ? 80 : 224;
+  CGFloat width = _host.bounds.size.width, height = _host.bounds.size.height;
+  _sidebar.frame = NSMakeRect(0, 0, inset, height);
+  _toolbar.frame = NSMakeRect(inset, height - 64, width - inset, 64);
+  _heading.hidden = _collapsed;
+  _scroll.frame = NSMakeRect(8, _collapsed ? 72 : 103, inset - 16, MAX(100, height - (_collapsed ? 88 : 119)));
+  _table.tableColumns.firstObject.width = inset - 28;
+  _collapse.accessibilityLabel = _collapsed ? @"Expand sidebar" : @"Collapse sidebar";
+  _collapse.toolTip = _collapsed ? @"Expand sidebar (⌘⇧L)" : @"Collapse sidebar (⌘⇧L)";
+  BOOL changed = collapseChanged || ![_accounts isEqual:snapshot[@"accounts"]] || ![_snapshot[@"activeId"] isEqual:snapshot[@"activeId"]];
+  _snapshot = snapshot;
+  _accounts = snapshot[@"accounts"] ?: @[];
+  NSInteger selected = -1;
+  for (NSUInteger i = 0; i < _accounts.count; ++i) if ([_accounts[i][@"id"] isEqual:snapshot[@"activeId"]]) selected = i;
+  if (changed) {
+    [_table reloadData];
+    if (selected >= 0) [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:selected] byExtendingSelection:NO];
+    else [_table deselectAll:nil];
+  }
+  NSDictionary *active = selected >= 0 ? _accounts[selected] : nil;
+  _title.stringValue = active[@"name"] ?: @"Switchboard";
+  _subtitle.stringValue = active ? status(active) : @"Your Quo workspaces, together";
+  _more.enabled = YES;
+  _add.enabled = _accounts.count < 12;
+  _updating = NO;
+  if (collapseChanged && !NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion) {
+    _table.alphaValue = 0;
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+      context.duration = 0.16;
+      _table.animator.alphaValue = 1;
+    } completionHandler:nil];
+  }
+}
+- (NSInteger)numberOfRowsInTableView:(NSTableView *)table { return _accounts.count; }
+- (NSTableRowView *)tableView:(NSTableView *)table rowViewForRow:(NSInteger)row { return [[WorkspaceRow alloc] init]; }
+- (NSView *)tableView:(NSTableView *)table viewForTableColumn:(NSTableColumn *)column row:(NSInteger)row {
+  NSDictionary *account = _accounts[row];
+  WorkspaceCell *cell = [[WorkspaceCell alloc] initWithFrame:NSMakeRect(0, 0, _collapsed ? 52 : 196, 52)];
+  WorkspaceAvatar *avatar = [[WorkspaceAvatar alloc] initWithFrame:NSMakeRect(_collapsed ? 10 : 5, 13, 28, 28)];
+  avatar.account = account;
+  [cell addSubview:avatar];
+  if (!_collapsed) {
+    NSTextField *name = label(account[@"name"], NSMakeRect(43, 28, 118, 18), 13);
+    [cell addSubview:name];
+    cell.textField = name;
+    name.font = [NSFont systemFontOfSize:13 weight:[account[@"id"] isEqual:_snapshot[@"activeId"]] ? NSFontWeightSemibold : NSFontWeightRegular];
+    cell.detail = label(status(account), NSMakeRect(43, 10, 140, 16), 10);
+    cell.detail.textColor = NSColor.secondaryLabelColor;
+    [cell addSubview:cell.detail];
+  }
+  NSInteger count = [account[@"unread"] integerValue];
+  BOOL calling = [account[@"ringing"] boolValue] || [account[@"inCall"] boolValue];
+  if (count) {
+    WorkspaceBadge *badge = [[WorkspaceBadge alloc] initWithFrame:NSMakeRect(_collapsed ? 29 : 167, _collapsed ? 34 : 29, count > 99 ? 25 : 20, 15)];
+    badge.text = count > 99 ? @"99+" : [NSString stringWithFormat:@"%ld", (long)count];
+    [cell addSubview:badge];
+  }
+  if (calling) {
+    WorkspaceBadge *call = [[WorkspaceBadge alloc] initWithFrame:NSMakeRect(_collapsed ? 29 : 24, 8, 15, 15)];
+    call.calling = YES;
+    [cell addSubview:call];
+  }
+  cell.accessibilityElement = YES;
+  cell.accessibilityRole = NSAccessibilityGroupRole;
+  cell.accessibilityLabel = [NSString stringWithFormat:@"%@, %@, %ld unread", account[@"name"], status(account), (long)count];
+  cell.toolTip = [NSString stringWithFormat:@"%@ — %@%@", account[@"name"], status(account), row < 9 ? [NSString stringWithFormat:@" (⌘%ld)", (long)row + 1] : @""];
+  return cell;
+}
+- (void)tableViewSelectionDidChange:(NSNotification *)notification {
+  NSInteger row = _table.selectedRow;
+  if (!_updating && row >= 0 && row < (NSInteger)_accounts.count) [self emit:@{@"type": @"select", @"id": _accounts[row][@"id"]}];
+}
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+  [menu removeAllItems];
+  NSInteger row = _table.clickedRow;
+  if (row < 0 || row >= (NSInteger)_accounts.count) return;
+  [self populateMenu:menu account:_accounts[row] index:row];
+}
+- (void)populateMenu:(NSMenu *)menu account:(NSDictionary *)account index:(NSInteger)index {
+  NSArray *titles = @[@"Edit workspace…", @"Reload workspace", @"Move up", @"Move down", @"Remove workspace…"];
+  NSArray *actions = @[@"edit", @"reload", @"move-up", @"move-down", @"remove"];
+  menu.autoenablesItems = NO;
+  for (NSUInteger i = 0; i < titles.count; ++i) {
+    if (i == 2 || i == 4) [menu addItem:NSMenuItem.separatorItem];
+    NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:titles[i] action:@selector(menuAction:) keyEquivalent:@""];
+    item.target = self;
+    item.representedObject = @{@"type": actions[i], @"id": account[@"id"]};
+    item.enabled = !(i == 2 && index == 0) && !(i == 3 && index == (NSInteger)_accounts.count - 1);
+    [menu addItem:item];
+  }
+}
+- (void)menuAction:(NSMenuItem *)item {
+  NSDictionary *command = item.representedObject;
+  if ([command[@"type"] isEqual:@"edit"]) [self form:command[@"id"]];
+  else [self emit:command];
+}
+- (void)more:(id)sender {
+  NSString *identifier = _snapshot[@"activeId"];
+  NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Workspace"];
+  for (NSUInteger i = 0; i < _accounts.count; ++i) if ([_accounts[i][@"id"] isEqual:identifier]) {
+    [self populateMenu:menu account:_accounts[i] index:i];
+    [menu addItem:NSMenuItem.separatorItem];
+  }
+  for (NSArray *entry in @[@[@"Settings…", @"settings"], @[@"Connection health…", @"health"]]) {
+    NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:entry[0] action:@selector(menuAction:) keyEquivalent:@""];
+    item.target = self;
+    item.representedObject = @{@"type": entry[1]};
+    [menu addItem:item];
+  }
+  [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, _more.bounds.size.height + 4) inView:_more];
+}
+- (void)toggleSidebar:(id)sender { [self emit:@{@"type": @"toggle-sidebar"}]; }
+- (void)addWorkspace:(id)sender { [self form:nil]; }
+- (BOOL)validName {
+  NSString *value = [_nameField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+  return value.length > 0 && value.length <= 48 && [value rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location == NSNotFound;
+}
+- (void)controlTextDidChange:(NSNotification *)notification { _sheet.buttons.firstObject.enabled = [self validName]; }
+- (void)form:(NSString *)identifier {
+  if (_window.attachedSheet) { [_window.attachedSheet makeKeyAndOrderFront:nil]; return; }
+  if (!identifier && _accounts.count >= 12) { [self emit:@{@"type": @"workspace-limit"}]; return; }
+  NSDictionary *account = nil;
+  for (NSDictionary *item in _accounts) if ([item[@"id"] isEqual:identifier]) account = item;
+  if (identifier && !account) return;
+  NSAlert *alert = [[NSAlert alloc] init];
+  alert.messageText = account ? @"Edit workspace" : @"New workspace";
+  alert.informativeText = account ? @"The name and color only change how this workspace appears in Switchboard." : @"Choose a name and color. Then sign in to Quo. Each workspace keeps its own sign-in.";
+  [alert addButtonWithTitle:account ? @"Save" : @"Create workspace"];
+  [alert addButtonWithTitle:@"Cancel"];
+  NSView *fields = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 340, 108)];
+  [fields addSubview:label(@"Workspace name", NSMakeRect(0, 84, 330, 18), 12)];
+  NSTextField *name = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 52, 340, 26)];
+  name.placeholderString = @"e.g. Acme Studio";
+  name.stringValue = account[@"name"] ?: @"";
+  name.accessibilityLabel = @"Workspace name";
+  name.delegate = self;
+  [fields addSubview:name];
+  [fields addSubview:label(@"Color", NSMakeRect(0, 10, 65, 20), 12)];
+  NSPopUpButton *colors = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(70, 5, 270, 28) pullsDown:NO];
+  NSArray *values = @[@"slate", @"blue", @"green", @"amber", @"rose", @"violet"];
+  for (NSString *value in values) {
+    [colors addItemWithTitle:value.capitalizedString];
+    colors.lastItem.representedObject = value;
+  }
+  [colors selectItemAtIndex:[values indexOfObject:account[@"color"] ?: values[_accounts.count % values.count]]];
+  colors.accessibilityLabel = @"Workspace color";
+  [fields addSubview:colors];
+  alert.accessoryView = fields;
+  alert.window.preventsApplicationTerminationWhenModal = NO;
+  _sheet = alert;
+  _nameField = name;
+  alert.buttons.firstObject.enabled = [self validName];
+  __weak ShellController *weakSelf = self;
+  [alert beginSheetModalForWindow:_window completionHandler:^(NSModalResponse response) {
+    ShellController *owner = weakSelf;
+    if (response == NSAlertFirstButtonReturn && [owner validName]) {
+      NSMutableDictionary *command = [@{@"type": account ? @"rename" : @"add", @"name": [name.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet], @"color": colors.selectedItem.representedObject} mutableCopy];
+      if (identifier) command[@"id"] = identifier;
+      [owner emit:command];
+    }
+    owner.nameField = nil;
+    owner.sheet = nil;
+  }];
+  [alert.window makeFirstResponder:name];
+  name.stringValue = account[@"name"] ?: @"";
+  [name selectText:nil];
+}
+- (void)settings {
+  if (_window.attachedSheet) { [_window.attachedSheet makeKeyAndOrderFront:nil]; return; }
+  NSAlert *alert = [[NSAlert alloc] init];
+  alert.messageText = @"Switchboard settings";
+  alert.informativeText = @"Closing the window keeps every workspace running. Quitting stops calls and notifications.";
+  [alert addButtonWithTitle:@"Save"];
+  [alert addButtonWithTitle:@"Cancel"];
+  NSView *fields = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 380, 192)];
+  NSArray *keys = @[@"notifications", @"privateNotifications", @"launchAtLogin", @"experimentalAnswer"];
+  NSArray *titles = @[@"Desktop notifications", @"Hide caller and message previews", @"Open Switchboard at login", @"Answer from notifications (experimental)"];
+  NSMutableArray<NSButton *> *buttons = [NSMutableArray array];
+  for (NSUInteger i = 0; i < keys.count; ++i) {
+    NSButton *button = [NSButton checkboxWithTitle:titles[i] target:nil action:nil];
+    button.frame = NSMakeRect(0, 162 - i * 30, 380, 24);
+    button.state = [_snapshot[@"preferences"][keys[i]] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
+    [buttons addObject:button];
+    [fields addSubview:button];
+  }
+  NSTextField *note = label(@"Direct answering depends on Quo’s current call controls.", NSMakeRect(0, 34, 380, 18), 11);
+  note.textColor = NSColor.secondaryLabelColor;
+  [fields addSubview:note];
+  NSButton *test = [self button:@"Test notification" symbol:@"bell" frame:NSMakeRect(0, 0, 154, 26) action:@selector(testNotification:) parent:fields];
+  test.enabled = [_snapshot[@"activeId"] isKindOfClass:NSString.class];
+  alert.accessoryView = fields;
+  alert.window.preventsApplicationTerminationWhenModal = NO;
+  _sheet = alert;
+  __weak ShellController *weakSelf = self;
+  [alert beginSheetModalForWindow:_window completionHandler:^(NSModalResponse response) {
+    ShellController *owner = weakSelf;
+    if (response == NSAlertFirstButtonReturn) {
+      NSMutableDictionary *preferences = [NSMutableDictionary dictionary];
+      for (NSUInteger i = 0; i < keys.count; ++i) preferences[keys[i]] = @(buttons[i].state == NSControlStateValueOn);
+      [owner emit:@{@"type": @"preferences", @"preferences": preferences}];
+    }
+    owner.sheet = nil;
+  }];
+}
+- (void)testNotification:(id)sender {
+  if ([_snapshot[@"activeId"] isKindOfClass:NSString.class]) [self emit:@{@"type": @"test-notification", @"id": _snapshot[@"activeId"]}];
+}
+- (void)dismiss { if (_window.attachedSheet) [_window endSheet:_window.attachedSheet returnCode:NSModalResponseCancel]; }
+- (void)dispose {
+  [self dismiss];
+  _table.delegate = nil;
+  _table.dataSource = nil;
+  _table.menu.delegate = nil;
+  [_sidebar removeFromSuperview];
+  [_toolbar removeFromSuperview];
+  _window.accessibilityChildren = _originalAccessibilityChildren;
+  if (_callback) { napi_release_threadsafe_function(_callback, napi_tsfn_abort); _callback = nullptr; }
+}
+@end
+
+static ShellController *controller;
+static void deliver(napi_env env, napi_value callback, void *, void *data) {
+  auto *json = static_cast<std::string *>(data);
+  if (env && callback) {
+    napi_value value, receiver, result;
+    napi_create_string_utf8(env, json->data(), json->size(), &value);
+    napi_get_undefined(env, &receiver);
+    napi_call_function(env, receiver, callback, 1, &value, &result);
+  }
+  delete json;
+}
+static NSString *stringArgument(napi_env env, napi_value value) {
+  size_t length = 0;
+  if (napi_get_value_string_utf8(env, value, nullptr, 0, &length) != napi_ok) return nil;
+  std::string data(length + 1, '\0');
+  napi_get_value_string_utf8(env, value, data.data(), data.size(), &length);
+  return [[NSString alloc] initWithBytes:data.data() length:length encoding:NSUTF8StringEncoding];
+}
+static napi_value attach(napi_env env, napi_callback_info info) {
+  size_t count = 2, length = 0;
+  napi_value args[2];
+  napi_get_cb_info(env, info, &count, args, nullptr, nullptr);
+  void *bytes = nullptr;
+  napi_valuetype callbackType;
+  if (count != 2 || napi_get_buffer_info(env, args[0], &bytes, &length) != napi_ok || length != sizeof(void *) || napi_typeof(env, args[1], &callbackType) != napi_ok || callbackType != napi_function || !NSThread.isMainThread) {
+    napi_throw_error(env, nullptr, "Native shell requires an NSView handle and a callback on the main thread"); return nullptr;
+  }
+  [controller dispose];
+  napi_threadsafe_function callback;
+  napi_value resource;
+  napi_create_string_utf8(env, "Switchboard AppKit actions", NAPI_AUTO_LENGTH, &resource);
+  if (napi_create_threadsafe_function(env, args[1], nullptr, resource, 64, 1, nullptr, nullptr, nullptr, deliver, &callback) != napi_ok) return nullptr;
+  napi_unref_threadsafe_function(env, callback);
+  NSView *view = (__bridge NSView *)*(void **)bytes;
+  controller = [[ShellController alloc] initWithView:view callback:callback];
+  return nullptr;
+}
+static napi_value update(napi_env env, napi_callback_info info) {
+  size_t count = 1; napi_value arg;
+  napi_get_cb_info(env, info, &count, &arg, nullptr, nullptr);
+  NSString *json = count ? stringArgument(env, arg) : nil;
+  NSDictionary *snapshot = json ? [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil] : nil;
+  if ([snapshot isKindOfClass:NSDictionary.class]) [controller update:snapshot];
+  return nullptr;
+}
+static napi_value form(napi_env env, napi_callback_info info) {
+  size_t count = 1; napi_value arg;
+  napi_get_cb_info(env, info, &count, &arg, nullptr, nullptr);
+  [controller form:count ? stringArgument(env, arg) : nil];
+  return nullptr;
+}
+static napi_value settings(napi_env env, napi_callback_info info) { [controller settings]; return nullptr; }
+static napi_value dismiss(napi_env env, napi_callback_info info) { [controller dismiss]; return nullptr; }
+static napi_value dispose(napi_env env, napi_callback_info info) { [controller dispose]; controller = nil; return nullptr; }
+static void cleanup(void *) { [controller dispose]; controller = nil; }
+static napi_value initialize(napi_env env, napi_value exports) {
+  napi_property_descriptor properties[] = {
+    {"attach", nullptr, attach, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"update", nullptr, update, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"form", nullptr, form, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"settings", nullptr, settings, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"dismiss", nullptr, dismiss, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"dispose", nullptr, dispose, nullptr, nullptr, nullptr, napi_default, nullptr}
+  };
+  napi_define_properties(env, exports, sizeof(properties) / sizeof(properties[0]), properties);
+  napi_add_env_cleanup_hook(env, cleanup, nullptr);
+  return exports;
+}
+NAPI_MODULE(NODE_GYP_MODULE_NAME, initialize)

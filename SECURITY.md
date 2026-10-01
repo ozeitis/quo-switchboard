@@ -8,6 +8,7 @@ Switchboard loads remote code from Quo. That code is necessary to use Quo, but i
 - Packaged builds disable Electron's Node execution and inspection environment switches and require an integrity-checked ASAR archive.
 - The local shell has a restrictive Content Security Policy and no network access.
 - Every shell IPC handler verifies the exact web contents, main frame, and local document URL.
+- The AppKit Node-API module loads only in the main process. Remote pages never receive its window handle, exports, or account-management callback. It uses public AppKit APIs.
 - Account events must come from that account’s main frame on `https://my.quo.com` or `https://my.openphone.com`. The main process supplies account identity; it ignores page-supplied identity.
 - Notification data is length-limited, normalized, rate-limited, and inserted as text. No remote HTML is rendered in the shell.
 - Native permission handlers allow a narrow set of browser capabilities on exact Quo origins. Microphone requests also require macOS permission. Camera and arbitrary device permissions are denied in this release.
@@ -17,6 +18,8 @@ Switchboard loads remote code from Quo. That code is necessary to use Quo, but i
 ## Local data
 
 The app stores workspace names, IDs, colors, and preferences in `workspaces.json`. Quo’s browser profiles contain normal web application data, including session material. The app does not export, synchronize, inspect, or log authentication tokens and does not collect passwords separately.
+
+`health.json` stores this run's page-response counts, workspace UUIDs, timestamps, and bounded lifecycle events. `window.json` stores window geometry. Both are local, owner-readable files. Health sampling does not read page text, tokens, messages, phone numbers, or network payloads. The app never uploads these reports.
 
 Browser-managed storage is not uniformly encrypted. Do not treat a browser profile as a dedicated encrypted vault. A compromised OS account or unlocked device is outside this application’s protection boundary. Never attach a profile directory, cookie database, or complete network trace to a public issue.
 
