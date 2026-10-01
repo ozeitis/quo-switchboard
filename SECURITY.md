@@ -20,6 +20,8 @@ The app stores workspace names, IDs, colors, and preferences in `workspaces.json
 
 Browser-managed storage is not uniformly encrypted. Do not treat a browser profile as a dedicated encrypted vault. A compromised OS account or unlocked device is outside this application’s protection boundary. Never attach a profile directory, cookie database, or complete network trace to a public issue.
 
+Packaged builds enable Electron's OS-backed cookie encryption. This does not encrypt local storage, IndexedDB, or all cached website data. Do not disable the cookie-encryption fuse in later releases: Electron documents the transition as one-way. Development runs use a separate `Switchboard Development` data directory to avoid opening production profiles with a different runtime configuration. Signing changes can also affect macOS Keychain access and must be tested during upgrades.
+
 The page adapter is not a security boundary against compromised Quo code: code already running in the authenticated Quo origin can operate that Quo session and spoof its own notifications. It still cannot select a different local workspace through the shell bridge.
 
 ## Releases

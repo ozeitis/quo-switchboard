@@ -94,6 +94,8 @@ npm run dist -- --arm64 --x64
 
 Outputs are in `release/`. Icons are checked in; regenerate them with `swift scripts/icons.swift assets` followed by `iconutil -c icns assets/AppIcon.iconset -o assets/icon.icns`.
 
+Development uses a separate `Switchboard Development` profile directory. Packaged releases keep their profiles under `Switchboard`.
+
 ## Known boundaries
 
 | Area | Current behavior |

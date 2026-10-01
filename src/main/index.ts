@@ -10,7 +10,7 @@ import { validColor, validId, validName, validPreferences, type ShellCommand, ty
 
 app.setName('Switchboard');
 app.setPath('userData', !app.isPackaged && process.env.SWITCHBOARD_TEST_DATA
-  ? process.env.SWITCHBOARD_TEST_DATA : join(app.getPath('appData'), 'Switchboard'));
+  ? process.env.SWITCHBOARD_TEST_DATA : join(app.getPath('appData'), app.isPackaged ? 'Switchboard' : 'Switchboard Development'));
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
 
