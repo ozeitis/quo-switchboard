@@ -34,6 +34,10 @@ Switchboard gives each workspace its own saved browser session and keeps them ru
 
 **It does not bypass Quo’s session rules.** Saved profiles avoid losing local sign-ins unnecessarily; Quo can still expire or revoke them. Switchboard does not capture passwords, replay credentials, or run its own token-refresh loop.
 
+### iPhone feasibility
+
+An iPhone version depends on supported Quo voice access and verified native calling on a physical device. The public API provides call records and lifecycle webhooks, without a documented native Answer or audio connection. A SwiftUI/CallKit probe builds with Xcode 27, but simulator requests did not establish calling support. See the [test results and reproduction steps](ios/README.md). A full iPhone app remains gated on a real call with two-way audio while locked, from either workspace.
+
 ## How it works
 
 ```mermaid

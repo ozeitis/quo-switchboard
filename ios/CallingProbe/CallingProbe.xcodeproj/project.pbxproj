@@ -1,0 +1,86 @@
+// !$*UTF8*$!
+{
+    archiveVersion = 1;
+    classes = {};
+    objectVersion = 77;
+    objects = {
+        A00000000000000000000001 = {
+            isa = PBXProject;
+            attributes = { BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 2700; TargetAttributes = { A00000000000000000000002 = { CreatedOnToolsVersion = 27.0; }; }; };
+            buildConfigurationList = A00000000000000000000010;
+            compatibilityVersion = "Xcode 16.0";
+            developmentRegion = en;
+            hasScannedForEncodings = 0;
+            knownRegions = (en, Base);
+            mainGroup = A00000000000000000000003;
+            preferredProjectObjectVersion = 77;
+            productRefGroup = A00000000000000000000005;
+            projectDirPath = "";
+            projectRoot = "";
+            targets = (A00000000000000000000002);
+        };
+        A00000000000000000000002 = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = A00000000000000000000011;
+            buildPhases = (A00000000000000000000007, A00000000000000000000008, A00000000000000000000009);
+            buildRules = ();
+            dependencies = ();
+            fileSystemSynchronizedGroups = (A00000000000000000000004);
+            name = CallingProbe;
+            packageProductDependencies = ();
+            productName = CallingProbe;
+            productReference = A00000000000000000000006;
+            productType = "com.apple.product-type.application";
+        };
+        A00000000000000000000003 = { isa = PBXGroup; children = (A00000000000000000000004, A00000000000000000000005); sourceTree = "<group>"; };
+        A00000000000000000000004 = { isa = PBXFileSystemSynchronizedRootGroup; path = Sources; sourceTree = "<group>"; };
+        A00000000000000000000005 = { isa = PBXGroup; children = (A00000000000000000000006); name = Products; sourceTree = "<group>"; };
+        A00000000000000000000006 = { isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CallingProbe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+        A00000000000000000000007 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        A00000000000000000000008 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        A00000000000000000000009 = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        A00000000000000000000010 = { isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012, A00000000000000000000013); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        A00000000000000000000011 = { isa = XCConfigurationList; buildConfigurations = (A00000000000000000000014, A00000000000000000000015); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        A00000000000000000000012 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { CLANG_ENABLE_MODULES = YES; SDKROOT = iphoneos; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; };
+        A00000000000000000000013 = { isa = XCBuildConfiguration; name = Release; buildSettings = { CLANG_ENABLE_MODULES = YES; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; }; };
+        A00000000000000000000014 = { isa = XCBuildConfiguration; name = Debug; buildSettings = {
+            CODE_SIGN_STYLE = Automatic;
+            CURRENT_PROJECT_VERSION = 1;
+            GENERATE_INFOPLIST_FILE = YES;
+            INFOPLIST_FILE = Info.plist;
+            INFOPLIST_KEY_CFBundleDisplayName = "Switchboard Probe";
+            INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+            INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+            INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+            INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+            IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+            MARKETING_VERSION = 0.1.0;
+            PRODUCT_BUNDLE_IDENTIFIER = com.ozeitis.switchboard.calling-probe;
+            PRODUCT_NAME = "$(TARGET_NAME)";
+            SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+            SWIFT_STRICT_CONCURRENCY = complete;
+            SWIFT_VERSION = 6.0;
+            TARGETED_DEVICE_FAMILY = "1,2";
+        }; };
+        A00000000000000000000015 = { isa = XCBuildConfiguration; name = Release; buildSettings = {
+            CODE_SIGN_STYLE = Automatic;
+            CURRENT_PROJECT_VERSION = 1;
+            GENERATE_INFOPLIST_FILE = YES;
+            INFOPLIST_FILE = Info.plist;
+            INFOPLIST_KEY_CFBundleDisplayName = "Switchboard Probe";
+            INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+            INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+            INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+            INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+            IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+            MARKETING_VERSION = 0.1.0;
+            PRODUCT_BUNDLE_IDENTIFIER = com.ozeitis.switchboard.calling-probe;
+            PRODUCT_NAME = "$(TARGET_NAME)";
+            SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+            SWIFT_STRICT_CONCURRENCY = complete;
+            SWIFT_VERSION = 6.0;
+            TARGETED_DEVICE_FAMILY = "1,2";
+        }; };
+    };
+    rootObject = A00000000000000000000001;
+}

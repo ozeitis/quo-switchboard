@@ -2,6 +2,9 @@ node_modules/
 dist/
 release/
 backups/
+ios/.build*/
+*.xcuserstate
+xcuserdata/
 test-results/
 playwright-report/
 .DS_Store

@@ -1,0 +1,38 @@
+{
+  "api": {
+    "checkedAt": "2026-10-02T20:32:56Z",
+    "operations": [
+      {
+        "method": "GET",
+        "path": "/calls",
+        "summary": "List calls"
+      },
+      {
+        "method": "GET",
+        "path": "/calls/{callId}",
+        "summary": "Get a call by ID"
+      },
+      {
+        "method": "GET",
+        "path": "/calls/{callId}/recordings",
+        "summary": "List recordings for a call"
+      },
+      {
+        "method": "GET",
+        "path": "/calls/{callId}/transcripts",
+        "summary": "List transcripts for a call"
+      }
+    ]
+  },
+  "callKit": {
+    "detail": "The operation couldn\u2019t be completed. (com.apple.CallKit.error error 0.)",
+    "errorCode": 0,
+    "errorDomain": "com.apple.CallKit.error",
+    "status": "CallKit rejected the request"
+  },
+  "checkedAt": "2026-10-02T20:32:56Z",
+  "environment": "iOS Simulator 27.0",
+  "liveQuoAudioVerified": false,
+  "pushKitDeliveryVerified": false,
+  "specification": "https://openphone-public-api-prod.s3.us-west-2.amazonaws.com/public/openphone-public-api-2026-03-30-prod.json"
+}
