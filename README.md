@@ -17,7 +17,7 @@ Switchboard gives each workspace its own saved browser session and keeps them ru
 - Collapse the sidebar to an icon rail with **⌘⇧L**. Unread counts and call indicators stay visible.
 - See which workspace sent a desktop notification. Click to open that workspace.
 - Answer or decline recognized calls from a persistent native floating panel. Answer opens the source workspace automatically, even when the main window was closed.
-- See incoming calls from every workspace in a native strip above Quo. Close with **⌘W**, minimize with **⌘M**, and reopen with **⌘⇧O**; background calls keep running.
+- Handle incoming calls from every workspace in a native call sheet, with a compact desktop panel when you are elsewhere. Close with **⌘W**, minimize with **⌘M**, and reopen with **⌘⇧O**; background calls keep running.
 - Open a native activity popover from one compact menu-bar icon or **⌘⇧A**. See every workspace, observed unread counts, current calls, and recent Quo alerts. Separate workspace icons and visible counts are optional.
 - See incoming, active, held, and other observable call states in the rail and menu bar. Incoming calls pulse gently; Reduce Motion stops animation.
 - Choose a workspace palette, custom accent, and light/dark appearance in a native theme picker. Quo’s shared surfaces and menus inherit it.
@@ -61,7 +61,7 @@ Every workspace gets a persistent Chromium session and a retained `WebContentsVi
 | Build | esbuild 0.28.2 / electron-builder 26.15.3 | Bundled app, Apple Silicon and Intel DMGs |
 | Verification | Node tests / Playwright 1.63.0 | Security boundaries and actual desktop behavior |
 
-The sidebar, toolbar, workspace sheets, Settings window, activity popover, and floating call panel are native AppKit. macOS 26 and 27 supply Liquid Glass through `NSGlassEffectView` and native glass buttons; older supported systems use native vibrancy. System appearance, accent colors, and accessibility preferences drive the controls. Quo’s conversation interface remains Quo’s web app. A small presentation adapter stabilizes its sidebar and uses Mac fonts while preserving dyslexia, code, and emoji fonts. **View → Use Mac Fonts** restores Quo's typography when unchecked. The native theme picker previews each workspace independently. Apply saves; Cancel restores. See [themes and compatibility](docs/themes.md) and [architecture](docs/architecture.md).
+The sidebar, toolbar, workspace sheets, Settings window, activity popover, call sheet, and floating call panel are native AppKit. macOS 26 and 27 supply Liquid Glass through `NSGlassEffectView` and native glass buttons; older supported systems use native vibrancy. System appearance, accent colors, and accessibility preferences drive the controls. Quo’s conversation interface remains Quo’s web app. A small presentation adapter stabilizes its sidebar and uses Mac fonts while preserving dyslexia, code, and emoji fonts. **View → Use Mac Fonts** restores Quo's typography when unchecked. The native theme picker previews each workspace independently. Apply saves; Cancel restores. See [themes and compatibility](docs/themes.md) and [architecture](docs/architecture.md).
 
 ## Install
 
@@ -78,7 +78,7 @@ Preview builds are **ad-hoc signed, not Apple-notarized**. They do not carry a v
 
 Normal notification clicks open the correct workspace and forward the click to Quo. When the adapter recognizes one incoming-call control, it can also show an incoming-call notification. Caller details are included when Quo supplies them through a page notification; otherwise the alert identifies the workspace only.
 
-**Floating incoming call controls** keeps a native panel above other apps without taking focus when it appears. Answer and Decline route to the current source call. The panel respects preview privacy and screen lock; it is separate from Notification Center and its Focus behavior. Turn it off in Settings → General when only system-managed alerts are wanted. [Call design and compatibility](docs/calls.md).
+**Floating incoming call controls** keeps a native panel above other apps without taking focus when it appears. Answer and Decline route to the current source call. The panel respects preview privacy and screen lock; it is separate from Notification Center and its Focus behavior. A focused app uses a native call sheet instead. The call presentation suppresses duplicate system call alerts; ordinary messages stay in Notification Center. Turn floating controls off in Settings → General to use system-managed call alerts outside the app. [Call design and compatibility](docs/calls.md).
 
 **Answer from system notifications** is an optional experiment. It invokes the current Quo answer button after checking the originating workspace and local call token again. Ambiguous or replaced controls are rejected. A detected active call blocks direct answering. Quo interface changes can break this adapter; the ordinary Quo call controls remain available.
 

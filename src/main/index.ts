@@ -82,7 +82,6 @@ function snapshot(): Snapshot {
     themeCatalog: THEME_PRESETS.map(preset => ({ id: preset.id, name: preset.name, colors: resolveTheme({ preset: preset.id, mode: activeAppearance.theme.mode, accent: activeAppearance.theme.accent ?? preset.accent }, nativeTheme.shouldUseDarkColors, environment.increaseContrast, environment.systemAccent).colors }))
   };
   state.incomingCalls = incomingCallCards(state, id => notifications?.callPreview(id));
-  state.callShelfHeight = nativeShell ? Math.min(SHELL_LAYOUT.callMaxRows, state.incomingCalls.length) * SHELL_LAYOUT.callRowHeight : 0;
   return state;
 }
 
@@ -139,9 +138,7 @@ function publish(): void {
 
 function layoutWorkspaces(): void {
   const width = nativeShell ? store.value.sidebarCollapsed ? SHELL_LAYOUT.railWidth : SHELL_LAYOUT.sidebarWidth : 224;
-  const rings = [...accounts.entries.values()].filter(entry => entry.state.ringing && entry.state.callId).length + (testCall?.phase === 'ringing' ? 1 : 0);
-  const shelf = nativeShell ? Math.min(SHELL_LAYOUT.callMaxRows, rings) * SHELL_LAYOUT.callRowHeight : 0;
-  accounts.layout(store.value.activeId, overlay, width, (nativeShell ? SHELL_LAYOUT.toolbarHeight : 64) + shelf);
+  accounts.layout(store.value.activeId, overlay, width, nativeShell ? SHELL_LAYOUT.toolbarHeight : 64);
 }
 
 function refreshMenus(): void {
@@ -167,7 +164,7 @@ function refreshMenus(): void {
       { label: 'Update all workspaces', accelerator: 'CommandOrControl+Shift+U', enabled: !!active && !webUpdates?.state().blocked && webUpdates?.state().phase === 'idle', click: () => {
         void command({ type: 'update-workspaces' }).catch(() => { void dialog.showMessageBox(window, { type: 'info', message: 'Workspaces could not update.', detail: 'Finish calls and reconnect offline workspaces, then try again.' }); });
       } },
-      { type: 'separator' }, { label: 'Close Window', role: 'close', accelerator: 'CommandOrControl+W' }
+      { type: 'separator' }, { label: 'Close Window', accelerator: 'CommandOrControl+W', click: () => { if (nativeShell) nativeShell.closeWindow(); else window.close(); } }
     ] },
     { role: 'editMenu' },
     { label: 'View', submenu: [
@@ -401,7 +398,7 @@ if (gotLock) void app.whenReady().then(async () => {
   health = new Health(app.getPath('userData'));
   accounts = new Accounts(window, publish, id => notifications?.reset(id), health, appearance, () => store.value.audio);
   calls = new Calls(accounts.entries, select);
-  notifications = new Notifications(window, accounts, () => store.value.preferences, select, () => { notificationError = true; publish(); }, publish, calls);
+  notifications = new Notifications(window, accounts, () => store.value.preferences, select, () => { notificationError = true; publish(); }, publish, calls, () => callPanel?.ownsAlerts() ?? false);
   webUpdates = new WebUpdates(accounts.entries, publish);
   ipcMain.handle('account:audio-policy', event => {
     const entry = [...accounts.entries.values()].find(entry => entry.view.webContents === event.sender);
@@ -425,7 +422,7 @@ if (gotLock) void app.whenReady().then(async () => {
     void enqueue(value).catch(() => { void dialog.showMessageBox(window, { type: 'error', message: 'Could not complete that action', detail: 'Try again.' }); });
   });
   if (NativeShell.enabled()) {
-    const nativeCommand = (value: unknown) => { void enqueue(value).catch(error => { void dialog.showMessageBox(window, { type: 'error', message: 'Could not complete that action', detail: error instanceof Error ? error.message : 'Try again.' }); }); };
+    const nativeCommand = (value: unknown) => enqueue(value).catch(async error => { await dialog.showMessageBox(window, { type: 'error', message: 'Could not complete that action', detail: error instanceof Error ? error.message : 'Try again.' }); });
     nativeShell = new NativeShell(window, nativeCommand);
     callPanel = new CallPanel(window, nativeCommand);
   }
@@ -523,7 +520,7 @@ async function shutdown(): Promise<void> {
   if (shutdownStarted) return;
   shutdownStarted = true;
   clearInterval(healthTimer); clearTimeout(testCallTimer); calls?.dispose(); webUpdates?.dispose();
-  callPanel?.dispose(); nativeShell?.dispose();
+  await callPanel?.dispose(); nativeShell?.dispose();
   notifications?.closeAll();
   await accounts?.close();
   health?.close();

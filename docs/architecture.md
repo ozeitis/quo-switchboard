@@ -81,7 +81,7 @@ Incoming-call observation uses accessible button labels, never screen coordinate
 
 This cannot establish a durable server call ID or prove transport health. A webpage can change faster than the adapter. Answer from notifications therefore defaults off and is labeled experimental. Popover and floating-panel call controls are available only while a current unambiguous control is recognized; they share the same UI-observation limitation. Call-state inference also means cross-account busy detection is conservative only for recognized controls; it is not a replacement for provider-level call coordination.
 
-`CallPanel` publishes source-bound incoming cards to a nonactivating AppKit `NSPanel` and a native strip inside the main window. The strip reserves space above Quo, shows calls to every workspace, and scrolls after three rows. Desktop-alert preferences hide the floating panel while leaving in-app controls available. Screen lock hides both; preview privacy is applied before either receives caller text. Floating dismissal is local to its control token. Both surfaces and notification actions use the same acknowledged `Calls` coordinator. See [call design](calls.md).
+`CallPanel` sends source-bound incoming cards to AppKit. A foreground window uses a native sheet; background and hidden windows use a nonactivating panel. The call view uses Auto Layout, standard system glass buttons, and semantic tint hierarchy. It never changes Quo's viewport. Call waiting stays modeless. Desktop-alert preferences govern background panels while leaving foreground sheets available. Screen lock hides both; preview privacy applies before native views receive text. Dismissal is local to the call token. Both surfaces and notification actions use the same acknowledged `Calls` coordinator. The coordinator owns duplicate-alert suppression, and native sheet dismissal is awaited before shutdown. See [call design](calls.md).
 
 ## Lifecycle
 
@@ -122,8 +122,8 @@ No relay, API key storage, server, or paid subscription is part of this release.
 | `src/main/index.ts` | App lifecycle, menus, IPC authorization, command routing |
 | `src/main/accounts.ts` | Profile isolation, navigation, permissions, views |
 | `src/main/text-menu.ts` | Native text menus bound to their originating browser view |
-| `src/main/call-panel.ts` | Source-bound floating incoming calls and privacy |
-| `native/call-panel.mm` | Nonactivating AppKit panel and native call buttons |
+| `src/main/call-panel.ts` | Source-bound call presentation, lifecycle, and privacy |
+| `native/call-panel.mm` | AppKit call sheet, nonactivating panel, and native buttons |
 | `src/main/menu-bar.ts` | Native activity models, status-item preferences, ringing animation |
 | `src/preload/appearance.ts` | Scoped Quo navigation and typography adaptation |
 | `src/preload/unread.ts` | Semantic unread badge observation and unavailable-state reporting |

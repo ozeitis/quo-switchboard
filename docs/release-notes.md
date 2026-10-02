@@ -1,3 +1,12 @@
+Switchboard for Quo 0.5.2 — native call sheets and a single clear call presentation.
+
+- Incoming calls use a focused AppKit sheet while the main window is active. Quo keeps its full viewport.
+- A compact native glass panel handles background and closed-window calls. Call waiting stays modeless.
+- Call controls use AppKit's own glass buttons, capsule shape, semantic tints, and action hierarchy. No hand-drawn button renderer remains.
+- Call panels suppress duplicate system call alerts. Ordinary messages retain native Notification Center delivery; system call alerts remain available with floating controls disabled.
+- Answer disables repeated actions while routing to the current source call. Dismiss and Escape hide the presentation without declining.
+- Sheet ownership is explicit. Shutdown awaits native dismissal before destroying the parent; Close Window targets the current native window or call presentation correctly.
+
 Switchboard for Quo 0.5.1 — incoming calls in the window and standard Mac commands.
 
 - Incoming calls appear in a native strip inside the main window, including calls to other workspaces. Quo's controls move below the strip and remain reachable.

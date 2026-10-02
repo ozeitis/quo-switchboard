@@ -1,68 +1,79 @@
-// A nonactivating panel remains visible when the main window is hidden.
-#include <cmath>
+@class CallPanelController;
 @interface IncomingCallPanel : NSPanel
+@property (weak) CallPanelController *owner;
 @end
-@implementation IncomingCallPanel
-- (BOOL)canBecomeMainWindow { return NO; }
-- (BOOL)canBecomeKeyWindow { return NO; }
-@end
-
 @interface CallPanelButton : NSButton
 @property NSDictionary *command;
 @property NSString *dismissToken;
-@property NSColor *semanticColor;
 @end
 @implementation CallPanelButton
 - (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
 - (BOOL)needsPanelToBecomeKey { return NO; }
-- (void)drawRect:(NSRect)dirtyRect {
-  if (!_semanticColor) { [super drawRect:dirtyRect]; return; }
-  NSColor *background = [_semanticColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
-  // Preserve semantic system hues, with at least 4.5:1 against white text.
-  CGFloat r = background.redComponent, g = background.greenComponent, b = background.blueComponent;
-  auto linear = [](CGFloat value) { return value <= 0.04045 ? value / 12.92 : std::pow((value + 0.055) / 1.055, 2.4); };
-  while (0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b) > 0.1833) { r *= 0.95; g *= 0.95; b *= 0.95; }
-  background = [NSColor colorWithSRGBRed:r green:g blue:b alpha:1];
-  if (!self.enabled) background = NSColor.quaternaryLabelColor;
-  else if (self.highlighted) background = [background blendedColorWithFraction:0.12 ofColor:NSColor.blackColor];
-  [background setFill];
-  [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 1, 1) xRadius:14 yRadius:14] fill];
-  NSColor *foreground = self.enabled ? NSColor.whiteColor : NSColor.secondaryLabelColor;
-  NSDictionary *attributes = @{NSFontAttributeName:self.font, NSForegroundColorAttributeName:foreground};
-  NSSize size = [self.title sizeWithAttributes:attributes];
-  CGFloat total = size.width + (self.image ? 23 : 0), x = (self.bounds.size.width - total) / 2;
-  if (self.image) {
-    NSImage *image = [self.image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[foreground]]];
-    [image drawInRect:NSMakeRect(x, (self.bounds.size.height - 15) / 2, 15, 15) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
-    x += 23;
-  }
-  [self.title drawAtPoint:NSMakePoint(x, (self.bounds.size.height - size.height) / 2) withAttributes:attributes];
-  if (self.window.firstResponder == self) { NSSetFocusRingStyle(NSFocusRingOnly); [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 1, 1) xRadius:14 yRadius:14] fill]; }
-}
 @end
-
 @interface CallPanelController : NSObject
 @property IncomingCallPanel *panel;
+@property IncomingCallPanel *sheet;
 @property (weak) NSWindow *mainWindow;
-@property FlippedView *shelf;
 @property NSDictionary *model;
+@property NSArray *renderedCards;
+@property BOOL renderedCompact;
+@property CGFloat renderedHeight;
 @property NSMutableSet<NSString *> *dismissed;
+@property NSMutableSet<NSString *> *pending;
+@property BOOL rendering;
+@property BOOL queued;
+@property BOOL disposed;
+@property BOOL endingSheet;
 @property napi_threadsafe_function callback;
 - (void)update:(NSDictionary *)model;
 - (void)render;
-- (void)renderShelf;
+- (void)dismissAlerts;
+- (void)closeMainWindow;
+- (BOOL)ownsAlerts;
 - (void)dispose;
+- (void)finishDispose;
 @end
-
+@implementation IncomingCallPanel
+- (BOOL)canBecomeMainWindow { return NO; }
+- (BOOL)canBecomeKeyWindow { return YES; }
+- (void)cancelOperation:(id)sender { [_owner dismissAlerts]; }
+- (void)performClose:(id)sender { [_owner closeMainWindow]; }
+@end
 @implementation CallPanelController
 - (instancetype)init {
   if ((self = [super init])) {
-    _dismissed = [NSMutableSet set];
-    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(screenChanged:) name:NSApplicationDidChangeScreenParametersNotification object:nil];
+    _dismissed = [NSMutableSet set]; _pending = [NSMutableSet set];
+    for (NSString *name in @[NSApplicationDidBecomeActiveNotification, NSApplicationDidResignActiveNotification, NSApplicationDidHideNotification, NSApplicationDidUnhideNotification,
+      NSApplicationDidChangeScreenParametersNotification, NSWindowDidBecomeKeyNotification, NSWindowDidResignKeyNotification,
+      NSWindowDidMiniaturizeNotification, NSWindowDidDeminiaturizeNotification, NSWindowDidChangeOcclusionStateNotification,
+      NSWindowDidEndSheetNotification, NSWindowDidResizeNotification]) {
+      [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(presentationChanged:) name:name object:nil];
+    }
+    [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self selector:@selector(presentationChanged:) name:NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification object:nil];
   }
   return self;
 }
 - (NSString *)token:(NSDictionary *)card { return [NSString stringWithFormat:@"%@:%@", card[@"id"], card[@"callId"]]; }
+- (BOOL)foreground {
+  return NSApp.active && !NSApp.hidden && _mainWindow.visible && !_mainWindow.miniaturized &&
+    (_mainWindow.keyWindow || _sheet.keyWindow || (_sheet && _mainWindow.attachedSheet == _sheet));
+}
+- (BOOL)canPresentSheet {
+  if (![self foreground] || _pending.count || _endingSheet || (_mainWindow.attachedSheet && _mainWindow.attachedSheet != _sheet)) return NO;
+  for (NSDictionary *card in _model[@"cards"]) if ([card[@"busy"] boolValue]) return NO;
+  return YES;
+}
+- (BOOL)ownsAlerts { return [_model[@"enabled"] boolValue] || ([_model[@"unlocked"] boolValue] && [self canPresentSheet]); }
+- (void)presentationChanged:(NSNotification *)notification {
+  if (_disposed || _rendering || _queued) return;
+  if ([notification.object isKindOfClass:NSWindow.class] && notification.object != _mainWindow && notification.object != _sheet && notification.object != _panel) return;
+  _queued = YES;
+  __weak CallPanelController *weakSelf = self;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    CallPanelController *owner = weakSelf; owner.queued = NO;
+    if (!owner.disposed) [owner render];
+  });
+}
 - (void)emit:(NSDictionary *)command {
   NSString *json = [[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:command options:0 error:nil] encoding:NSUTF8StringEncoding];
   if (_callback && json) {
@@ -70,175 +81,221 @@
     if (napi_call_threadsafe_function(_callback, message, napi_tsfn_nonblocking) != napi_ok) delete message;
   }
 }
-- (void)act:(CallPanelButton *)sender {
-  if (sender.dismissToken) { [_dismissed addObject:sender.dismissToken]; [self render]; }
-  else [self emit:sender.command];
+- (void)endSheet {
+  if (_sheet.sheetParent) {
+    if (!_endingSheet) { _endingSheet = YES; [_sheet.sheetParent endSheet:_sheet]; }
+  } else [_sheet orderOut:nil];
 }
-- (CallPanelButton *)button:(NSString *)title symbol:(NSString *)symbol command:(NSDictionary *)command frame:(NSRect)frame parent:(NSView *)parent {
-  CallPanelButton *button = [[CallPanelButton alloc] initWithFrame:frame];
-  button.title = title; button.command = command; button.target = self; button.action = @selector(act:);
-  button.bezelStyle = NSBezelStylePush; button.controlSize = NSControlSizeRegular;
-  if (@available(macOS 26.0, *)) button.bezelStyle = NSBezelStyleGlass;
-  button.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
-  button.focusRingType = NSFocusRingTypeExterior;
-  button.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
-  button.imagePosition = title.length ? NSImageLeading : NSImageOnly;
-  button.symbolConfiguration = [NSImageSymbolConfiguration configurationWithPointSize:13 weight:NSFontWeightMedium];
-  button.accessibilityLabel = title; [parent addSubview:button]; return button;
+- (void)dismissAlerts {
+  for (NSDictionary *card in _model[@"cards"]) [_dismissed addObject:[self token:card]];
+  [self render];
+}
+- (void)closeMainWindow { [self endSheet]; [_mainWindow orderOut:nil]; [self render]; }
+- (void)act:(CallPanelButton *)sender {
+  if (sender.dismissToken) { [_dismissed addObject:sender.dismissToken]; [self render]; return; }
+  NSString *callId = sender.command[@"callId"];
+  if (callId) {
+    if ([_pending containsObject:callId]) return;
+    [_pending addObject:callId]; _renderedCards = nil; [self endSheet]; [self render];
+  }
+  [self emit:sender.command];
+}
+- (CallPanelButton *)button:(NSString *)title symbol:(NSString *)symbol command:(NSDictionary *)command tint:(NSColor *)tint {
+  CallPanelButton *button = [CallPanelButton buttonWithTitle:title target:self action:@selector(act:)];
+  button.command = command; button.controlSize = NSControlSizeRegular; button.bezelStyle = NSBezelStylePush;
+  button.font = [NSFont systemFontOfSize:NSFont.systemFontSize weight:NSFontWeightMedium];
+  button.image = symbol ? [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil] : nil;
+  button.imagePosition = NSImageLeading; button.imageHugsTitle = YES; button.bezelColor = tint;
+  if (@available(macOS 26.0, *)) { button.bezelStyle = NSBezelStyleGlass; button.borderShape = NSControlBorderShapeCapsule; button.tintProminence = tint ? NSTintProminencePrimary : NSTintProminenceNone; }
+  button.accessibilityLabel = title; button.translatesAutoresizingMaskIntoConstraints = NO;
+  [button.heightAnchor constraintEqualToConstant:32].active = YES;
+  return button;
+}
+- (NSStackView *)stack:(NSUserInterfaceLayoutOrientation)orientation spacing:(CGFloat)spacing {
+  NSStackView *stack = [[NSStackView alloc] initWithFrame:NSZeroRect];
+  stack.orientation = orientation; stack.spacing = spacing; stack.translatesAutoresizingMaskIntoConstraints = NO;
+  stack.alignment = orientation == NSUserInterfaceLayoutOrientationVertical ? NSLayoutAttributeLeading : NSLayoutAttributeCenterY;
+  return stack;
+}
+- (NSTextField *)text:(NSString *)text size:(CGFloat)size weight:(NSFontWeight)weight secondary:(BOOL)secondary {
+  NSTextField *field = [NSTextField labelWithString:text ?: @""];
+  field.font = [NSFont systemFontOfSize:size weight:weight]; field.textColor = secondary ? NSColor.secondaryLabelColor : NSColor.labelColor;
+  field.lineBreakMode = NSLineBreakByTruncatingTail; field.translatesAutoresizingMaskIntoConstraints = NO;
+  return field;
+}
+- (NSView *)card:(NSDictionary *)card compact:(BOOL)compact width:(CGFloat)width {
+  NSView *root = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, width, compact ? 202 : 252)];
+  root.accessibilityElement = YES; root.accessibilityRole = NSAccessibilityGroupRole;
+  root.accessibilityLabel = [NSString stringWithFormat:@"Incoming call in %@", card[@"name"]];
+  NSStackView *stack = [self stack:NSUserInterfaceLayoutOrientationVertical spacing:12]; [root addSubview:stack];
+  [NSLayoutConstraint activateConstraints:@[
+    [stack.leadingAnchor constraintEqualToAnchor:root.leadingAnchor constant:24], [stack.trailingAnchor constraintEqualToAnchor:root.trailingAnchor constant:-24],
+    [stack.topAnchor constraintEqualToAnchor:root.topAnchor constant:20], [stack.bottomAnchor constraintLessThanOrEqualToAnchor:root.bottomAnchor constant:-20]]];
+  NSStackView *header = [self stack:NSUserInterfaceLayoutOrientationHorizontal spacing:7];
+  NSImageView *workspaceIcon = [[NSImageView alloc] init]; workspaceIcon.image = [NSImage imageWithSystemSymbolName:@"building.2.crop.circle.fill" accessibilityDescription:nil];
+  workspaceIcon.contentTintColor = card[@"accent"] ? hexColor(card[@"accent"]) : color(card[@"color"]); workspaceIcon.translatesAutoresizingMaskIntoConstraints = NO;
+  [NSLayoutConstraint activateConstraints:@[[workspaceIcon.widthAnchor constraintEqualToConstant:16], [workspaceIcon.heightAnchor constraintEqualToConstant:16]]];
+  [header addArrangedSubview:workspaceIcon];
+  NSTextField *workspace = [self text:card[@"name"] size:12 weight:NSFontWeightSemibold secondary:YES]; workspace.toolTip = card[@"name"]; [header addArrangedSubview:workspace];
+  [header addArrangedSubview:[[NSView alloc] init]];
+  CallPanelButton *dismiss = [self button:@"" symbol:@"xmark" command:nil tint:nil]; dismiss.bordered = NO;
+  dismiss.dismissToken = [self token:card]; dismiss.keyEquivalent = @"\e"; [dismiss.widthAnchor constraintEqualToConstant:24].active = YES;
+  dismiss.accessibilityLabel = [NSString stringWithFormat:@"Dismiss alert for %@", card[@"name"]]; dismiss.toolTip = @"Hide the alert. The call continues ringing.";
+  [header addArrangedSubview:dismiss]; [stack addArrangedSubview:header]; [header.widthAnchor constraintEqualToAnchor:stack.widthAnchor].active = YES;
+  NSStackView *identity = [self stack:NSUserInterfaceLayoutOrientationHorizontal spacing:14];
+  NSImageView *avatar = [[NSImageView alloc] init]; avatar.image = [NSImage imageWithSystemSymbolName:@"phone.circle.fill" accessibilityDescription:nil];
+  avatar.contentTintColor = NSColor.systemGreenColor; avatar.imageScaling = NSImageScaleProportionallyUpOrDown;
+  avatar.translatesAutoresizingMaskIntoConstraints = NO; CGFloat avatarSize = compact ? 40 : 52;
+  [NSLayoutConstraint activateConstraints:@[[avatar.widthAnchor constraintEqualToConstant:avatarSize], [avatar.heightAnchor constraintEqualToConstant:avatarSize]]];
+  [identity addArrangedSubview:avatar];
+  NSStackView *name = [self stack:NSUserInterfaceLayoutOrientationVertical spacing:4];
+  [name addArrangedSubview:[self text:[card[@"simulation"] boolValue] ? @"Test call · local simulation" : @"Incoming audio call" size:11 weight:NSFontWeightRegular secondary:YES]];
+  NSString *title = [card[@"title"] length] ? card[@"title"] : @"Incoming call";
+  NSTextField *caller = [self text:title size:compact ? 18 : 22 weight:NSFontWeightSemibold secondary:NO]; caller.toolTip = title; [name addArrangedSubview:caller];
+  [identity addArrangedSubview:name]; [stack addArrangedSubview:identity]; [identity.widthAnchor constraintEqualToAnchor:stack.widthAnchor].active = YES;
+  [name.widthAnchor constraintEqualToAnchor:identity.widthAnchor constant:-(avatarSize + 14)].active = YES;
+  NSString *body = [card[@"busy"] boolValue] ? @"Another call is active. Finish it before answering." : [card[@"body"] length] ? card[@"body"] : @"Answer opens the receiving workspace.";
+  body = [body stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+  if ([body hasPrefix:@"📞"]) body = [[body substringFromIndex:@"📞".length] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+  NSTextField *detail = [self text:body size:12 weight:NSFontWeightRegular secondary:YES]; detail.lineBreakMode = NSLineBreakByWordWrapping; detail.maximumNumberOfLines = 2; detail.toolTip = body;
+  [stack addArrangedSubview:detail]; [detail.widthAnchor constraintEqualToAnchor:stack.widthAnchor].active = YES; [detail.heightAnchor constraintGreaterThanOrEqualToConstant:28].active = YES;
+  NSString *kind = [card[@"simulation"] boolValue] ? @"test-call-action" : @"call-action";
+  NSDictionary *(^command)(NSString *) = ^NSDictionary *(NSString *action) { return @{@"type":kind, @"id":card[@"id"], @"callId":card[@"callId"], @"action":action}; };
+  NSStackView *actions = [self stack:NSUserInterfaceLayoutOrientationHorizontal spacing:10]; [actions addArrangedSubview:[[NSView alloc] init]];
+  BOOL pending = [_pending containsObject:card[@"callId"]];
+  CallPanelButton *previous = dismiss;
+  if ([card[@"actions"] containsObject:@"decline"]) {
+    CallPanelButton *decline = [self button:@"Decline" symbol:@"phone.down.fill" command:command(@"decline") tint:NSColor.systemRedColor];
+    decline.enabled = !pending; decline.accessibilityLabel = [NSString stringWithFormat:@"Decline call in %@", card[@"name"]];
+    if (@available(macOS 26.0, *)) decline.tintProminence = NSTintProminenceSecondary;
+    previous.nextKeyView = decline; previous = decline;
+    [decline.widthAnchor constraintEqualToConstant:104].active = YES; [actions addArrangedSubview:decline];
+  }
+  BOOL canAnswer = [card[@"actions"] containsObject:@"answer"];
+  CallPanelButton *answer = [self button:pending ? @"Working…" : canAnswer ? @"Answer" : @"Open workspace" symbol:canAnswer ? @"phone.fill" : @"arrow.up.forward.app"
+    command:canAnswer ? command(@"answer") : @{@"type":@"select", @"id":card[@"id"]} tint:canAnswer ? NSColor.systemGreenColor : NSColor.controlAccentColor];
+  answer.enabled = !pending && (!canAnswer || ![card[@"busy"] boolValue]); answer.accessibilityLabel = [NSString stringWithFormat:canAnswer ? @"Answer call in %@" : @"Open %@", card[@"name"]];
+  answer.toolTip = canAnswer ? @"Answer in the receiving workspace." : @"Manage this call in Quo.";
+  [answer.widthAnchor constraintEqualToConstant:canAnswer ? 104 : 136].active = YES; [actions addArrangedSubview:answer];
+  [stack addArrangedSubview:actions]; [actions.widthAnchor constraintEqualToAnchor:stack.widthAnchor].active = YES;
+  root.nextKeyView = dismiss; previous.nextKeyView = answer; answer.nextKeyView = dismiss;
+  return root;
+}
+- (void)populate:(IncomingCallPanel *)window cards:(NSArray *)cards compact:(BOOL)compact width:(CGFloat)width height:(CGFloat)height {
+  if ([_renderedCards isEqual:cards] && _renderedCompact == compact && _renderedHeight == height) return;
+  _renderedCards = [cards copy]; _renderedCompact = compact; _renderedHeight = height; CGFloat rowHeight = compact ? 202 : 252;
+  FlippedView *content = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, width, rowHeight * cards.count)]; CGFloat y = 0;
+  for (NSDictionary *card in cards) { NSView *view = [self card:card compact:compact width:width]; view.frame = NSMakeRect(0, y, width, rowHeight); [content addSubview:view]; y += rowHeight; }
+  NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, width, height)];
+  scroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable; scroll.drawsBackground = NO; scroll.hasVerticalScroller = rowHeight * cards.count > height; scroll.documentView = content;
+  if (!compact) {
+    NSView *surface = [[NSView alloc] initWithFrame:scroll.frame];
+    [surface addSubview:scroll]; window.contentView = surface;
+  } else if (@available(macOS 26.0, *)) {
+    NSGlassEffectView *glass = [[NSGlassEffectView alloc] initWithFrame:scroll.frame]; glass.cornerRadius = 20; glass.contentView = scroll; window.contentView = glass;
+  } else {
+    NSVisualEffectView *surface = [[NSVisualEffectView alloc] initWithFrame:scroll.frame]; surface.material = NSVisualEffectMaterialHUDWindow;
+    surface.blendingMode = NSVisualEffectBlendingModeBehindWindow; surface.state = NSVisualEffectStateActive; [surface addSubview:scroll]; window.contentView = surface;
+  }
+  window.initialFirstResponder = content.subviews.firstObject.nextKeyView;
+}
+- (IncomingCallPanel *)makeWindow:(BOOL)compact {
+  IncomingCallPanel *window = [[IncomingCallPanel alloc] initWithContentRect:NSMakeRect(0, 0, compact ? 360 : 420, compact ? 202 : 252)
+    styleMask:compact ? NSWindowStyleMaskNonactivatingPanel : NSWindowStyleMaskTitled | NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
+  window.owner = self; window.title = @"Incoming calls — Switchboard"; window.titleVisibility = NSWindowTitleHidden; window.titlebarAppearsTransparent = YES; window.releasedWhenClosed = NO;
+  window.becomesKeyOnlyIfNeeded = compact; window.worksWhenModal = YES;
+  window.animationBehavior = NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion ? NSWindowAnimationBehaviorNone : NSWindowAnimationBehaviorAlertPanel;
+  if (compact) { window.level = NSFloatingWindowLevel; window.floatingPanel = YES; window.hidesOnDeactivate = NO;
+    window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+    window.opaque = NO; window.backgroundColor = NSColor.clearColor; window.hasShadow = YES; window.movableByWindowBackground = YES; }
+  for (NSWindowButton kind : {NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton}) [window standardWindowButton:kind].hidden = YES;
+  return window;
 }
 - (void)update:(NSDictionary *)model {
-  NSMutableSet *current = [NSMutableSet set];
-  for (NSDictionary *card in model[@"cards"]) [current addObject:[self token:card]];
-  [_dismissed intersectSet:current];
+  _sheet.appearance = _mainWindow.appearance;
+  NSMutableSet *current = [NSMutableSet set], *callIds = [NSMutableSet set];
+  for (NSDictionary *card in model[@"cards"]) { [current addObject:[self token:card]]; [callIds addObject:card[@"callId"]]; }
+  [_dismissed intersectSet:current]; [_pending intersectSet:callIds];
   if ([_model isEqual:model]) return;
   _model = model; [self render];
 }
-- (void)screenChanged:(NSNotification *)notification { [self render]; }
-- (void)renderShelf {
-  NSView *host = _mainWindow.contentView;
-  if (!host) return;
-  if (!_shelf) {
-    _shelf = [[FlippedView alloc] initWithFrame:NSZeroRect];
-    _shelf.accessibilityElement = YES; _shelf.accessibilityRole = NSAccessibilityGroupRole; _shelf.accessibilityLabel = @"Incoming calls";
-    _shelf.accessibilityParent = _mainWindow;
-    _mainWindow.accessibilityChildren = [(_mainWindow.accessibilityChildren ?: @[]) arrayByAddingObject:_shelf];
-  }
-  CGFloat height = [_model[@"shelfHeight"] doubleValue], inset = [_model[@"sidebarWidth"] doubleValue];
-  CGFloat width = MAX(0, [_model[@"width"] doubleValue] - inset), row = [_model[@"rowHeight"] doubleValue];
-  _shelf.frame = NSMakeRect(inset, [_model[@"height"] doubleValue] - [_model[@"toolbarHeight"] doubleValue] - height, width, height);
-  _shelf.hidden = ![_model[@"shelfEnabled"] boolValue] || height <= 0;
-  [_shelf.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
-  [host addSubview:_shelf positioned:NSWindowAbove relativeTo:nil];
-  if (_shelf.hidden) return;
-  NSArray *cards = _model[@"cards"];
-  NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:_shelf.bounds]; scroll.drawsBackground = NO; scroll.hasVerticalScroller = cards.count * row > height;
-  FlippedView *content = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, width, cards.count * row)];
-  CGFloat y = 0;
-  for (NSDictionary *card in cards) {
-    NSString *kind = [card[@"simulation"] boolValue] ? @"test-call-action" : @"call-action";
-    NSDictionary *(^command)(NSString *) = ^NSDictionary *(NSString *action) { return @{@"type":kind, @"id":card[@"id"], @"callId":card[@"callId"], @"action":action}; };
-    NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(16, y + 18, 24, 24)]; icon.image = [NSImage imageWithSystemSymbolName:@"phone.badge.waveform.fill" accessibilityDescription:@"Incoming call"];
-    icon.contentTintColor = card[@"accent"] ? hexColor(card[@"accent"]) : color(card[@"color"]); [content addSubview:icon];
-    NSString *title = [NSString stringWithFormat:@"%@ · %@", card[@"name"], [card[@"title"] length] ? card[@"title"] : @"Incoming call"];
-    NSTextField *heading = label(title, NSMakeRect(52, y + 12, MAX(80, width - 292), 18), 13); heading.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold]; heading.toolTip = title; [content addSubview:heading];
-    NSString *body = [card[@"busy"] boolValue] ? @"Finish the active call before answering." : [card[@"body"] length] ? card[@"body"] : @"Answer opens the receiving workspace.";
-    NSTextField *detail = label(body, NSMakeRect(52, y + 32, MAX(80, width - 292), 16), 11); detail.textColor = NSColor.secondaryLabelColor; detail.toolTip = body; [content addSubview:detail];
-    NSArray *actions = card[@"actions"] ?: @[];
-    BOOL canAnswer = [actions containsObject:@"answer"];
-    CallPanelButton *answer = [self button:canAnswer ? @"Answer" : @"Open" symbol:canAnswer ? @"phone.fill" : @"arrow.up.forward.app" command:canAnswer ? command(@"answer") : @{@"type":@"select", @"id":card[@"id"]} frame:NSMakeRect(width - 112, y + 13, 96, 34) parent:content];
-    answer.semanticColor = canAnswer ? NSColor.systemGreenColor : NSColor.systemBlueColor; answer.enabled = !canAnswer || ![card[@"busy"] boolValue]; answer.accessibilityLabel = [NSString stringWithFormat:canAnswer ? @"Answer call in %@" : @"Open %@", card[@"name"]];
-    if ([actions containsObject:@"decline"]) {
-      CallPanelButton *decline = [self button:@"Decline" symbol:@"phone.down.fill" command:command(@"decline") frame:NSMakeRect(width - 216, y + 13, 96, 34) parent:content]; decline.semanticColor = NSColor.systemRedColor; decline.accessibilityLabel = [NSString stringWithFormat:@"Decline call in %@", card[@"name"]];
-    }
-    y += row;
-  }
-  scroll.documentView = content; [_shelf addSubview:scroll];
-}
 - (void)render {
-  [self renderShelf];
-  NSMutableArray *cards = [NSMutableArray array];
+  if (_disposed || _rendering) return;
+  _rendering = YES; NSMutableArray *cards = [NSMutableArray array];
+  NSWindowAnimationBehavior animation = NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion ? NSWindowAnimationBehaviorNone : NSWindowAnimationBehaviorAlertPanel;
+  _sheet.animationBehavior = animation; _panel.animationBehavior = animation;
   for (NSDictionary *card in _model[@"cards"]) if (![_dismissed containsObject:[self token:card]]) [cards addObject:card];
-  if (![_model[@"enabled"] boolValue] || !cards.count) { [_panel orderOut:nil]; return; }
-  if (!_panel) {
-    _panel = [[IncomingCallPanel alloc] initWithContentRect:NSMakeRect(0, 0, 360, 170)
-      styleMask:NSWindowStyleMaskNonactivatingPanel
-      backing:NSBackingStoreBuffered defer:NO];
-    _panel.title = @"Incoming calls — Switchboard"; _panel.titleVisibility = NSWindowTitleHidden; _panel.titlebarAppearsTransparent = YES;
-    _panel.level = NSFloatingWindowLevel; _panel.floatingPanel = YES; _panel.hidesOnDeactivate = NO;
-    _panel.becomesKeyOnlyIfNeeded = YES; _panel.worksWhenModal = YES; _panel.releasedWhenClosed = NO;
-    _panel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
-    _panel.opaque = NO; _panel.backgroundColor = NSColor.clearColor; _panel.hasShadow = YES; _panel.movableByWindowBackground = YES;
-    _panel.animationBehavior = NSWindowAnimationBehaviorNone;
-    for (NSWindowButton kind : {NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton}) [_panel standardWindowButton:kind].hidden = YES;
-  }
-  CGFloat rowHeight = 176, height = MIN(600, rowHeight * cards.count + 12);
-  NSScreen *screen = NSApp.mainWindow.screen ?: NSScreen.mainScreen;
-  NSRect available = screen.visibleFrame;
-  height = MIN(height, MAX(100, available.size.height - 36));
-  BOOL retainedPosition = _panel.visible && NSIntersectsRect(_panel.frame, available);
-  NSRect frame = NSMakeRect(retainedPosition ? _panel.frame.origin.x : NSMaxX(available) - 378,
-    retainedPosition ? NSMaxY(_panel.frame) - height : NSMaxY(available) - height - 18, 360, height);
-  frame.origin.x = MAX(NSMinX(available), MIN(frame.origin.x, NSMaxX(available) - frame.size.width));
-  frame.origin.y = MAX(NSMinY(available), MIN(frame.origin.y, NSMaxY(available) - frame.size.height));
-  [_panel setFrame:frame display:YES];
-  NSView *surface = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, 360, height)];
-  if (@available(macOS 26.0, *)) {
-    NSGlassEffectView *glass = [[NSGlassEffectView alloc] initWithFrame:surface.bounds]; glass.cornerRadius = 20; glass.contentView = surface; _panel.contentView = glass;
+  if (![_model[@"unlocked"] boolValue] || !cards.count) { [self endSheet]; [_panel orderOut:nil]; _renderedCards = nil; _rendering = NO; return; }
+  BOOL sheet = [self canPresentSheet];
+  if (sheet) {
+    [_panel orderOut:nil]; if (!_sheet) _sheet = [self makeWindow:NO];
+    _sheet.appearance = _mainWindow.appearance;
+    CGFloat height = MIN(252 * cards.count, MAX(252, _mainWindow.contentView.bounds.size.height - 112));
+    [self populate:_sheet cards:cards compact:NO width:420 height:height]; [_sheet setContentSize:NSMakeSize(420, height)];
+    if (!_sheet.sheetParent) {
+      __weak CallPanelController *weakSelf = self;
+      IncomingCallPanel *presented = _sheet;
+      [_mainWindow beginSheet:presented completionHandler:^(NSModalResponse response) {
+        [presented orderOut:nil];
+        CallPanelController *owner = weakSelf; owner.endingSheet = NO;
+        if (!owner || owner.disposed) { [presented close]; owner.sheet = nil; [owner finishDispose]; }
+        else [owner render];
+      }];
+    }
   } else {
-    NSVisualEffectView *effect = [[NSVisualEffectView alloc] initWithFrame:surface.bounds]; effect.material = NSVisualEffectMaterialHUDWindow;
-    effect.blendingMode = NSVisualEffectBlendingModeBehindWindow; effect.state = NSVisualEffectStateActive;
-    effect.wantsLayer = YES; effect.layer.cornerRadius = 18; effect.layer.masksToBounds = YES; [effect addSubview:surface]; _panel.contentView = effect;
+    [self endSheet];
+    if ([_model[@"enabled"] boolValue]) {
+      if (!_panel) _panel = [self makeWindow:YES];
+      NSScreen *screen = _mainWindow.screen ?: NSScreen.mainScreen; NSRect available = screen.visibleFrame;
+      CGFloat height = MIN(202 * cards.count, MIN(606, available.size.height - 36));
+      BOOL retain = _panel.visible && NSIntersectsRect(_panel.frame, available);
+      NSRect frame = NSMakeRect(retain ? _panel.frame.origin.x : NSMaxX(available) - 378, retain ? NSMaxY(_panel.frame) - height : NSMaxY(available) - height - 18, 360, height);
+      frame.origin.x = MAX(NSMinX(available), MIN(frame.origin.x, NSMaxX(available) - 360));
+      frame.origin.y = MAX(NSMinY(available), MIN(frame.origin.y, NSMaxY(available) - height));
+      [self populate:_panel cards:cards compact:YES width:360 height:height]; [_panel setFrame:frame display:YES]; [_panel orderFrontRegardless];
+    } else { [_panel orderOut:nil]; _renderedCards = nil; }
   }
-  NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:surface.bounds]; scroll.drawsBackground = NO;
-  scroll.hasVerticalScroller = rowHeight * cards.count + 12 > height;
-  FlippedView *content = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, 360, rowHeight * cards.count + 12)];
-  CGFloat y = 8;
-  for (NSDictionary *card in cards) {
-    NSString *identifier = card[@"id"], *callId = card[@"callId"];
-    NSString *kind = [card[@"simulation"] boolValue] ? @"test-call-action" : @"call-action";
-    NSDictionary *(^command)(NSString *) = ^NSDictionary *(NSString *action) { return @{@"type":kind, @"id":identifier, @"callId":callId, @"action":action}; };
-    NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(20, y + 8, 26, 26)];
-    icon.image = [NSImage imageWithSystemSymbolName:@"phone.badge.waveform.fill" accessibilityDescription:@"Incoming call"];
-    icon.contentTintColor = card[@"accent"] ? hexColor(card[@"accent"]) : color(card[@"color"]); [content addSubview:icon];
-    icon.wantsLayer = YES; icon.layer.cornerRadius = 8; icon.layer.backgroundColor = [icon.contentTintColor colorWithAlphaComponent:0.12].CGColor;
-    NSTextField *workspace = label(card[@"name"], NSMakeRect(56, y + 8, 263, 19), 13); workspace.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold]; [content addSubview:workspace];
-    NSTextField *heading = label([card[@"title"] length] ? card[@"title"] : @"Incoming call", NSMakeRect(20, y + 44, 320, 22), 17);
-    heading.font = [NSFont systemFontOfSize:17 weight:NSFontWeightSemibold]; [content addSubview:heading];
-    NSTextField *detail = label([card[@"body"] length] ? card[@"body"] : @"Answer opens this workspace.", NSMakeRect(20, y + 70, 320, 18), 12); detail.textColor = NSColor.secondaryLabelColor; [content addSubview:detail];
-    CallPanelButton *dismiss = [self button:@"" symbol:@"xmark" command:nil frame:NSMakeRect(326, y + 5, 24, 24) parent:content];
-    dismiss.bezelStyle = NSBezelStyleToolbar; dismiss.showsBorderOnlyWhileMouseInside = YES; dismiss.dismissToken = [self token:card];
-    dismiss.accessibilityLabel = [NSString stringWithFormat:@"Dismiss alert for %@", card[@"name"]]; dismiss.toolTip = @"Dismiss this alert. The call continues ringing.";
-    NSArray *actions = card[@"actions"] ?: @[];
-    if ([actions containsObject:@"answer"]) {
-      CallPanelButton *answer = [self button:@"Answer" symbol:@"phone.fill" command:command(@"answer") frame:NSMakeRect(180, y + 101, 158, 40) parent:content];
-      answer.semanticColor = NSColor.systemGreenColor; answer.enabled = ![card[@"busy"] boolValue];
-      answer.accessibilityLabel = [NSString stringWithFormat:@"Answer call in %@", card[@"name"]];
-      answer.toolTip = answer.enabled ? @"Answer in the originating workspace" : @"Finish the active call before answering another.";
-    } else {
-      CallPanelButton *open = [self button:@"Open workspace" symbol:@"arrow.up.forward.app" command:@{@"type":@"select", @"id":identifier} frame:NSMakeRect(180, y + 101, 158, 40) parent:content];
-      open.semanticColor = NSColor.systemBlueColor;
-      open.accessibilityLabel = [NSString stringWithFormat:@"Open %@", card[@"name"]];
-    }
-    if ([actions containsObject:@"decline"]) {
-      CallPanelButton *decline = [self button:@"Decline" symbol:@"phone.down.fill" command:command(@"decline") frame:NSMakeRect(20, y + 101, 148, 40) parent:content]; decline.semanticColor = NSColor.systemRedColor;
-      decline.accessibilityLabel = [NSString stringWithFormat:@"Decline call in %@", card[@"name"]];
-    }
-    if ([card[@"busy"] boolValue]) { NSTextField *busy = label(@"Another call is active. Answer is paused.", NSMakeRect(20, y + 148, 320, 16), 11); busy.textColor = NSColor.secondaryLabelColor; [content addSubview:busy]; }
-    y += rowHeight;
-  }
-  scroll.documentView = content; [surface addSubview:scroll];
-  [_panel orderFrontRegardless];
+  _rendering = NO;
 }
 - (void)dispose {
-  [NSNotificationCenter.defaultCenter removeObserver:self]; [_panel close]; _panel = nil;
-  if (_shelf) { NSMutableArray *children = [_mainWindow.accessibilityChildren mutableCopy]; [children removeObject:_shelf]; _mainWindow.accessibilityChildren = children; [_shelf removeFromSuperview]; _shelf = nil; }
-  if (_callback) { napi_release_threadsafe_function(_callback, napi_tsfn_abort); _callback = nullptr; }
+  if (_disposed) return;
+  _disposed = YES; [NSNotificationCenter.defaultCenter removeObserver:self]; [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:self];
+  [_panel close]; _panel = nil;
+  [self endSheet];
+  // Electron must not destroy the parent until AppKit finishes its sheet session.
+  if (!_endingSheet) { [_sheet close]; _sheet = nil; [self finishDispose]; }
+}
+- (void)finishDispose {
+  [self emit:@{@"type":@"call-panel-disposed"}];
+  if (_callback) { napi_release_threadsafe_function(_callback, napi_tsfn_release); _callback = nullptr; }
 }
 @end
-
 static CallPanelController *callPanelController;
 static napi_value callsAttach(napi_env env, napi_callback_info info) {
   size_t count = 2, length = 0; napi_value args[2]; void *bytes = nullptr; napi_get_cb_info(env, info, &count, args, nullptr, nullptr); napi_valuetype type;
   if (count != 2 || napi_get_buffer_info(env, args[0], &bytes, &length) != napi_ok || length != sizeof(void *) || napi_typeof(env, args[1], &type) != napi_ok || type != napi_function || !NSThread.isMainThread) { napi_throw_error(env, nullptr, "Call panels require an NSView handle and callback on the main thread"); return nullptr; }
-  [callPanelController dispose]; callPanelController = [[CallPanelController alloc] init];
-  callPanelController.mainWindow = ((__bridge NSView *)*(void **)bytes).window;
-  napi_value resource; napi_create_string_utf8(env, "Switchboard incoming calls", NAPI_AUTO_LENGTH, &resource);
-  napi_threadsafe_function callback;
+  [callPanelController dispose]; callPanelController = [[CallPanelController alloc] init]; callPanelController.mainWindow = ((__bridge NSView *)*(void **)bytes).window;
+  napi_value resource; napi_create_string_utf8(env, "Switchboard incoming calls", NAPI_AUTO_LENGTH, &resource); napi_threadsafe_function callback;
   if (napi_create_threadsafe_function(env, args[1], nullptr, resource, 64, 1, nullptr, nullptr, nullptr, deliver, &callback) == napi_ok) { napi_unref_threadsafe_function(env, callback); callPanelController.callback = callback; }
   return nullptr;
 }
 static napi_value callsUpdate(napi_env env, napi_callback_info info) {
-  size_t count = 1; napi_value arg; napi_get_cb_info(env, info, &count, &arg, nullptr, nullptr);
-  NSString *json = count ? stringArgument(env, arg) : nil;
+  size_t count = 1; napi_value arg; napi_get_cb_info(env, info, &count, &arg, nullptr, nullptr); NSString *json = count ? stringArgument(env, arg) : nil;
   NSDictionary *model = json ? [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil] : nil;
   if ([model isKindOfClass:NSDictionary.class]) [callPanelController update:model]; return nullptr;
 }
+static napi_value callsComplete(napi_env env, napi_callback_info info) {
+  size_t count = 1; napi_value arg; napi_get_cb_info(env, info, &count, &arg, nullptr, nullptr);
+  if (count) { [callPanelController.pending removeObject:stringArgument(env, arg)]; callPanelController.renderedCards = nil; [callPanelController render]; } return nullptr;
+}
+static napi_value callsOwnsAlerts(napi_env env, napi_callback_info info) { napi_value result; napi_get_boolean(env, [callPanelController ownsAlerts], &result); return result; }
 static napi_value callsInspect(napi_env env, napi_callback_info info) {
-  NSPanel *panel = callPanelController.panel;
+  BOOL sheet = callPanelController.sheet.sheetParent != nil; NSPanel *panel = sheet ? callPanelController.sheet : callPanelController.panel;
   NSDictionary *state = @{@"visible":@(panel.visible), @"key":@(panel.keyWindow), @"nonactivating":@((panel.styleMask & NSWindowStyleMaskNonactivatingPanel) != 0),
     @"level":@(panel.level), @"cards":callPanelController.model[@"cards"] ?: @[], @"dismissed":@(callPanelController.dismissed.count),
-    @"shelfVisible":@(callPanelController.mainWindow.visible && callPanelController.shelf && !callPanelController.shelf.hidden), @"shelfHeight":@(callPanelController.shelf.frame.size.height)};
+    @"presentation":sheet ? @"sheet" : panel.visible ? @"panel" : @"none", @"sheetVisible":@(sheet && panel.visible),
+    @"pending":@(callPanelController.pending.count), @"ownsAlerts":@([callPanelController ownsAlerts])};
   NSString *json = [[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:state options:0 error:nil] encoding:NSUTF8StringEncoding];
   napi_value result; napi_create_string_utf8(env, json.UTF8String, NAPI_AUTO_LENGTH, &result); return result;
 }
-static napi_value callsDispose(napi_env env, napi_callback_info info) { [callPanelController dispose]; callPanelController = nil; return nullptr; }
+static napi_value callsDispose(napi_env env, napi_callback_info info) { [callPanelController dispose]; return nullptr; }

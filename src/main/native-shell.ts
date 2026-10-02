@@ -11,6 +11,7 @@ interface AppKitBridge {
   theme(id: string): void;
   environment(): { reduceMotion: boolean; increaseContrast: boolean; systemAccent: string };
   dismiss(): void;
+  closeWindow(): void;
   dispose(): void;
 }
 
@@ -30,6 +31,7 @@ export class NativeShell {
     return process.platform === 'darwin' ? (require(join(__dirname, 'native/shell.node')) as AppKitBridge).environment() : { reduceMotion: false, increaseContrast: false, systemAccent: '#007aff' };
   }
   dismiss(): void { this.bridge.dismiss(); }
+  closeWindow(): void { this.bridge.closeWindow(); }
   dispose(): void { this.bridge.dispose(); }
   static enabled(): boolean {
     return process.platform === 'darwin' && (app.isPackaged || process.env.SWITCHBOARD_TEST_SHELL !== 'html');

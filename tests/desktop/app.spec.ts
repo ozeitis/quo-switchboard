@@ -9,7 +9,7 @@ import { channels } from '../../src/shared/theme';
 interface NativeRecord { notification: NativeNotification; title: string; body: string; subtitle: string; actions: string[] }
 type MainGlobal = typeof globalThis & { notificationRecords: NativeRecord[]; externalOrigins: string[]; textMenus: { menu: NativeMenu; frameURL?: string }[]; nativeStatus: { items: { id: string; name: string; title: string }[]; accounts: import('../../src/shared/model').AccountState[]; activity: import('../../src/shared/model').ActivityItem[]; testCall?: import('../../src/shared/model').Snapshot['testCall'] }; nativeStatusAction: (json: string) => void; nativeStatusInspect: () => { id: string; title: string; image: string }[]; fixtureReduceMotion?: boolean };
 type CallPanelGlobal = typeof globalThis & {
-  nativeCallsInspect(): { visible: boolean; key: boolean; nonactivating: boolean; level: number; dismissed: number; shelfVisible: boolean; shelfHeight: number; cards: { id: string; callId: string; name: string; actions: string[]; title?: string; body?: string; busy: boolean }[] };
+  nativeCallsInspect(): { visible: boolean; key: boolean; nonactivating: boolean; level: number; dismissed: number; sheetVisible: boolean; presentation: 'sheet' | 'panel' | 'none'; ownsAlerts: boolean; pending: number; cards: { id: string; callId: string; name: string; actions: string[]; title?: string; body?: string; busy: boolean }[] };
   nativeCallAction(json: string): void;
   fixtureCallFailures?: number;
 };
@@ -383,18 +383,21 @@ test('the native rail resizes retained views and keeps unread and call routing w
   expect(resized.bounds.every(bound => bound.x === 208 && bound.y === 52 && bound.width === resized.size[0]! - 208 && bound.height === resized.size[1]! - 52)).toBe(true);
   await expect.poll(() => workshop.evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width: resized.size[0]! - 208, height: resized.size[1]! - 52 });
   await command({ type: 'toggle-sidebar' });
-  await studio.evaluate(() => document.getElementById('ring')!.click());
+  await studio.evaluate(() => document.getElementById('notify')!.click());
   await expect.poll(async () => (await notifications()).length).toBeGreaterThan(0);
   // A notification also dismisses an unsaved native sheet without creating a workspace.
   await command({ type: 'new-workspace' });
   await application.evaluate(() => (globalThis as MainGlobal).notificationRecords.at(-1)!.notification.emit('click'));
   await expect.poll(async () => (await snapshot()).activeId).toBe(before.accounts[0]!.id);
-  await expect.poll(() => studio.evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width: resized.size[0]! - 56, height: resized.size[1]! - 112 });
+  await expect.poll(() => studio.evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width: resized.size[0]! - 56, height: resized.size[1]! - 52 });
   expect((await snapshot()).sidebarCollapsed).toBe(true);
-  expect((await snapshot()).accounts[0]!.ringing).toBe(true);
+  expect((await snapshot()).accounts[0]!.ringing).toBe(false);
   expect((await snapshot()).accounts).toHaveLength(2);
   expect(await studio.evaluate(() => document.body.dataset.retained)).toBe('yes');
-  await studio.getByRole('button', { name: 'Answer call' }).click();
+  await studio.evaluate(() => document.getElementById('ring')!.click());
+  await expect.poll(async () => (await snapshot()).accounts[0]!.ringing).toBe(true);
+  const call = (await snapshot()).accounts[0]!;
+  await command({ type: 'call-action', id: call.id, callId: call.callId, action: 'answer' });
   await studio.getByRole('button', { name: 'End call' }).click();
   await expect.poll(async () => { const account = (await snapshot()).accounts[0]!; return account.inCall || account.ringing; }).toBe(false);
   await application.close();
@@ -424,8 +427,9 @@ test('Quo navigation keeps its width across native window sizes and Mac fonts pr
   await page.evaluate(() => document.body.classList.add('dyslexia'));
   await expect.poll(() => page.locator('#sideMenu').evaluate(element => getComputedStyle(element).fontFamily)).toContain('OpenDyslexic');
   await page.getByRole('button', { name: 'Simulate incoming call' }).click();
-  await expect.poll(async () => (await notifications()).length).toBeGreaterThan(0);
-  await page.getByRole('button', { name: 'Answer call' }).click();
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]!.ringing).toBe(true);
+  const call = (await stateSnapshot()).accounts[0]!;
+  await shellCommand({ type: 'call-action', id: call.id, callId: call.callId, action: 'answer' });
   await page.getByRole('button', { name: 'End call' }).click();
 });
 
@@ -797,6 +801,10 @@ test('global microphone choice resolves per profile, survives restart, and leave
 test('diagnostic calls are labeled simulations, exercise controls, and never modify Quo calls or counts', async () => {
   await application.close(); await launch(dataDirectory, false, true, unreadFixture);
   const page = await addNative('Studio'); const id = (await stateSnapshot()).activeId!;
+  const preferences = (await stateSnapshot()).preferences;
+  await shellCommand({ type: 'preferences', preferences: { ...preferences, floatingCalls: false } });
+  await application.evaluate(({ app }) => app.hide());
+  await expect.poll(async () => (await callPanel()).ownsAlerts).toBe(false);
   await shellCommand({ type: 'test-call', id }); const callId = (await stateSnapshot()).testCall!.id;
   expect((await stateSnapshot()).accounts[0]).toMatchObject({ inCall: false, ringing: false, unread: 22 });
   expect((await notifications()).at(-1)?.subtitle).toBe('Test call · local simulation');
@@ -897,30 +905,34 @@ test('a failed update check preserves both controlling workers and a retry compl
 
 const currentQuoCallFixture = fixture.replace("area.innerHTML = '<button aria-label=\"Answer call\">Answer</button>';", "area.innerHTML = '<section role=\"dialog\" aria-label=\"Incoming call\"><p>Taylor</p><button>Decline</button><button>Accept</button></section>'; area.querySelectorAll('button')[0].onclick = () => { document.body.dataset.declined = 'yes'; area.replaceChildren(); };").replace("area.firstChild.onclick = () =>", "area.querySelectorAll('button')[1].onclick = () =>");
 const callPanel = () => application.evaluate(() => (globalThis as CallPanelGlobal).nativeCallsInspect());
+const focusMain = async () => {
+  await application.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0]!.focus(); });
+};
 const panelAction = (card: { id: string; callId: string }, action: string) => application.evaluate((_electron, value) => (globalThis as CallPanelGlobal).nativeCallAction(JSON.stringify(value)), { type: 'call-action', ...card, action });
 
-test('the current Quo Accept dialog produces a persistent nonactivating panel and answers its hidden source', async () => {
+test('the current Quo dialog produces a native call sheet, preserves page geometry, and answers its hidden source', async () => {
   await application.close(); await launch(dataDirectory, false, true, currentQuoCallFixture);
   const studio = await addNative('Studio'); const workshop = await addNative('Workshop');
   const ids = (await stateSnapshot()).accounts.map(account => account.id);
+  await focusMain();
   await studio.evaluate(() => document.getElementById('ring')!.click());
   await expect.poll(async () => (await callPanel()).cards.map(card => [card.name, card.actions])).toEqual([['Studio', ['answer', 'decline']]]);
   await expect.poll(async () => (await callPanel()).visible).toBe(true);
-  expect(await callPanel()).toMatchObject({ shelfVisible: true, shelfHeight: 60 });
-  expect(await application.evaluate(({ BrowserWindow, WebContentsView }) => BrowserWindow.getAllWindows()[0]!.contentView.children.filter(view => view instanceof WebContentsView && view.webContents.getURL().startsWith('https://my.quo.com')).map(view => view.getBounds().y))).toEqual([112, 112]);
-  expect(await callPanel()).toMatchObject({ nonactivating: true, key: false });
+  await expect.poll(async () => (await callPanel()).presentation).toBe('sheet');
+  expect(await application.evaluate(({ BrowserWindow, WebContentsView }) => BrowserWindow.getAllWindows()[0]!.contentView.children.filter(view => view instanceof WebContentsView && view.webContents.getURL().startsWith('https://my.quo.com')).map(view => view.getBounds().y))).toEqual([52, 52]);
+  expect(await callPanel()).toMatchObject({ sheetVisible: true, nonactivating: false });
   expect((await stateSnapshot()).activeId).toBe(ids[1]);
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
   expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(false);
   expect((await callPanel()).visible).toBe(true);
-  expect((await callPanel()).shelfVisible).toBe(false);
+  expect((await callPanel()).sheetVisible).toBe(false);
   const stale = (await callPanel()).cards[0]!;
   await panelAction({ id: stale.id, callId: stale.callId }, 'answer');
   await expect.poll(() => studio.evaluate(() => document.body.dataset.answered)).toBe('yes');
   expect(await workshop.evaluate(() => document.body.dataset.answered)).toBeUndefined();
   expect((await stateSnapshot()).activeId).toBe(ids[0]);
   await expect.poll(async () => (await callPanel()).visible).toBe(false);
-  expect((await callPanel()).shelfHeight).toBe(0);
+  expect((await callPanel()).presentation).toBe('none');
   expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(true);
   await studio.getByRole('button', { name: 'End call' }).click();
   await studio.evaluate(() => { delete document.body.dataset.answered; document.getElementById('ring')!.click(); });
@@ -938,6 +950,7 @@ test('the current Quo Accept dialog produces a persistent nonactivating panel an
 test('call panels honor privacy, screen lock, preferences, cancellation, and disabled or ambiguous controls', async () => {
   await application.close(); await launch(dataDirectory, false, true, currentQuoCallFixture);
   const page = await addNative('Studio'); await addNative('Workshop');
+  await focusMain();
   await page.evaluate(() => document.getElementById('ring')!.click());
   await expect.poll(async () => (await callPanel()).cards[0]?.body).toBe('Taylor is calling you');
   const preferences = (await stateSnapshot()).preferences;
@@ -946,14 +959,13 @@ test('call panels honor privacy, screen lock, preferences, cancellation, and dis
   expect((await callPanel()).cards[0]).not.toHaveProperty('title');
   await application.evaluate(({ powerMonitor }) => powerMonitor.emit('lock-screen'));
   expect((await callPanel()).visible).toBe(false);
-  expect((await callPanel()).shelfVisible).toBe(false);
+  expect((await callPanel()).sheetVisible).toBe(false);
   await application.evaluate(({ powerMonitor }) => powerMonitor.emit('unlock-screen'));
   expect((await callPanel()).visible).toBe(true);
   await shellCommand({ type: 'preferences', preferences: { ...preferences, floatingCalls: false } });
-  expect((await callPanel()).visible).toBe(false);
+  await expect.poll(async () => (await callPanel()).presentation).toBe('sheet');
   await shellCommand({ type: 'preferences', preferences: { ...preferences, notifications: false } });
-  expect((await callPanel()).visible).toBe(false);
-  expect((await callPanel()).shelfVisible).toBe(true);
+  await expect.poll(async () => (await callPanel()).presentation).toBe('sheet');
   await shellCommand({ type: 'preferences', preferences });
   expect((await callPanel()).visible).toBe(true);
   await page.evaluate(() => document.querySelector('#call button:last-child')!.setAttribute('disabled', ''));
@@ -969,7 +981,7 @@ test('native call cards stay distinct across workspaces, block busy Answer, and 
   const studio = await addNative('Studio'); const workshop = await addNative('Workshop');
   await studio.evaluate(() => document.getElementById('ring')!.click()); await workshop.evaluate(() => document.getElementById('ring')!.click());
   await expect.poll(async () => (await callPanel()).cards.map(card => card.name)).toEqual(['Studio', 'Workshop']);
-  expect((await callPanel()).shelfHeight).toBe(120);
+  expect((await callPanel()).cards).toHaveLength(2);
   const first = (await callPanel()).cards[0]!; await panelAction({ id: first.id, callId: first.callId }, 'answer');
   await expect.poll(async () => (await callPanel()).cards.map(card => [card.name, card.busy])).toEqual([['Workshop', true]]);
   await application.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false }); });
@@ -996,22 +1008,22 @@ test('standard window commands hide and restore the main window while incoming c
   await application.close(); await launch(dataDirectory, false, true, currentQuoCallFixture);
   const studio = await addNative('Studio'); await addNative('Workshop');
   await studio.evaluate(() => document.getElementById('ring')!.click());
-  await expect.poll(async () => (await callPanel()).shelfVisible).toBe(true);
+  await expect.poll(async () => (await callPanel()).visible).toBe(true);
   const menu = await application.evaluate(({ Menu }) => {
     const menu = Menu.getApplicationMenu()!;
-    return { close: menu.items.find(item => item.label === 'Workspace')!.submenu!.items.find(item => item.role === 'close')!.accelerator,
+    return { close: menu.items.find(item => item.label === 'Workspace')!.submenu!.items.find(item => item.label === 'Close Window')!.accelerator,
       window: menu.items.find(item => item.role?.toLowerCase() === 'windowmenu')!.submenu!.items.filter(item => item.role).map(item => item.role) };
   });
   expect(menu.close).toBe('CommandOrControl+W');
   expect(menu.window).toEqual(['minimize', 'zoom', 'front']);
   await application.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0]!.focus(); });
-  await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isFocused())).toBe(true);
-  await application.evaluate(({ Menu }) => Menu.sendActionToFirstResponder('performClose:'));
+  await expect.poll(async () => (await callPanel()).presentation).toBe('sheet');
+  await application.evaluate(({ Menu }) => { const item = Menu.getApplicationMenu()!.items.find(item => item.label === 'Workspace')!.submenu!.items.find(item => item.label === 'Close Window')!; item.click(); });
   await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(false);
   expect((await callPanel()).visible).toBe(true);
   await shellCommand({ type: 'show' });
   expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(true);
-  expect((await callPanel()).shelfVisible).toBe(true);
+  await expect.poll(async () => (await callPanel()).visible).toBe(true);
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.minimize());
   await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isMinimized())).toBe(true);
   await shellCommand({ type: 'show' });
@@ -1023,7 +1035,8 @@ test('system call notifications expose source-bound Decline and suppress alerts 
   await application.close(); await launch(dataDirectory, false, true, currentQuoCallFixture);
   const studio = await addNative('Studio'); const workshop = await addNative('Workshop');
   const preferences = (await stateSnapshot()).preferences;
-  await shellCommand({ type: 'preferences', preferences: { ...preferences, experimentalAnswer: true } });
+  await shellCommand({ type: 'preferences', preferences: { ...preferences, experimentalAnswer: true, floatingCalls: false } });
+  await application.evaluate(({ app }) => app.hide());
   await studio.evaluate(() => document.getElementById('ring')!.click());
   await expect.poll(async () => (await notifications()).at(-1)?.body).toBe('Taylor is calling you');
   expect((await notifications()).at(-1)?.actions).toEqual(['Answer', 'Decline']);
@@ -1036,4 +1049,22 @@ test('system call notifications expose source-bound Decline and suppress alerts 
   await expect.poll(async () => (await stateSnapshot()).accounts[0]!.inCall).toBe(true);
   await window.waitForTimeout(600);
   expect((await notifications()).length).toBe(count);
+});
+
+test('native call presentation suppresses duplicate call alerts while ordinary messages remain in Notification Center', async () => {
+  await application.close(); await launch(dataDirectory, false, true, currentQuoCallFixture);
+  const studio = await addNative('Studio'); const workshop = await addNative('Workshop');
+  await focusMain();
+  await studio.evaluate(() => document.getElementById('ring')!.click());
+  await expect.poll(async () => (await callPanel()).cards[0]?.body).toBe('Taylor is calling you');
+  await expect.poll(async () => (await callPanel()).presentation).toBe('sheet');
+  expect(await notifications()).toHaveLength(0);
+  await workshop.evaluate(() => document.getElementById('notify')!.click());
+  await expect.poll(async () => (await notifications()).map(item => item.body)).toEqual(['Fixture message']);
+  await application.evaluate(({ app }) => app.hide());
+  await expect.poll(async () => (await callPanel()).presentation).toBe('panel');
+  expect(await callPanel()).toMatchObject({ nonactivating: true, key: false });
+  await focusMain();
+  await expect.poll(async () => (await callPanel()).presentation).toBe('sheet');
+  expect(await notifications()).toHaveLength(1);
 });

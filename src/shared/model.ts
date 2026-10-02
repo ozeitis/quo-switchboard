@@ -65,7 +65,6 @@ export interface Snapshot {
   webUpdates?: WebUpdateState;
   testCall?: { id: string; workspaceId: string; phase: CallPhase; muted: boolean };
   incomingCalls?: IncomingCallCard[];
-  callShelfHeight?: number;
   appearance?: AppearanceOptions;
   themeCatalog?: { id: string; name: string; colors: AppearanceOptions['resolved']['colors'] }[];
 }

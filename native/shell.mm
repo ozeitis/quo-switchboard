@@ -372,7 +372,7 @@ static NSImage *themePreview(NSDictionary *colors) {
   CGFloat width = _host.bounds.size.width, height = _host.bounds.size.height;
   // Cut out the full page area, retaining only its top-left curve. The native
   // window owns the outer corners; no inset frame or remote-page CSS is needed.
-  CGFloat radius = [_layout[@"contentRadius"] doubleValue], top = height - toolbarHeight - [snapshot[@"callShelfHeight"] doubleValue];
+  CGFloat radius = [_layout[@"contentRadius"] doubleValue], top = height - toolbarHeight;
   CGFloat tangent = radius * 0.5522847498;
   CGMutablePathRef path = CGPathCreateMutable();
   CGPathAddRect(path, nil, CGRectMake(0, 0, width, height));
@@ -657,7 +657,7 @@ static NSImage *themePreview(NSDictionary *colors) {
     owner.themeId = nil; owner.themeDraft = nil; owner.themeCards = nil; owner.themeMode = nil; owner.themeWell = nil; owner.themeStatus = nil; owner.sheet = nil;
   }];
 }
-- (void)dismiss { if (_window.attachedSheet) [_window endSheet:_window.attachedSheet returnCode:NSModalResponseCancel]; }
+- (void)dismiss { if (_sheet && _window.attachedSheet == _sheet.window) [_window endSheet:_sheet.window returnCode:NSModalResponseCancel]; }
 - (void)dispose {
   [_settingsWindow close];
   [self dismiss];
@@ -753,13 +753,25 @@ static napi_value dispose(napi_env env, napi_callback_info info) { [controller d
 #include "activity.mm"
 #include "call-panel.mm"
 
+static napi_value closeWindow(napi_env env, napi_callback_info info) {
+  NSWindow *key = NSApp.keyWindow;
+  if (key && (key == callPanelController.sheet || key == callPanelController.panel)) [callPanelController closeMainWindow];
+  else if (controller.sheet && key == controller.sheet.window) [controller dismiss];
+  else if (key) [key performClose:nil];
+  else [controller.window performClose:nil];
+  return nullptr;
+}
+
 static void cleanup(void *) { [callPanelController dispose]; callPanelController = nil; [activityController dispose]; activityController = nil; [controller dispose]; controller = nil; }
 static napi_value initialize(napi_env env, napi_value exports) {
   napi_property_descriptor properties[] = {
     {"callsAttach", nullptr, callsAttach, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"callsUpdate", nullptr, callsUpdate, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"callsComplete", nullptr, callsComplete, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"callsOwnsAlerts", nullptr, callsOwnsAlerts, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"callsInspect", nullptr, callsInspect, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"callsDispose", nullptr, callsDispose, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"closeWindow", nullptr, closeWindow, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"statusAttach", nullptr, statusAttach, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"statusUpdate", nullptr, statusUpdate, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"statusFrame", nullptr, statusFrame, nullptr, nullptr, nullptr, napi_default, nullptr},

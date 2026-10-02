@@ -1,30 +1,40 @@
 import { join } from 'node:path';
 import type { BrowserWindow } from 'electron';
 import type { IncomingCallCard, ShellCommand, Snapshot } from '../shared/model';
-import { SHELL_LAYOUT } from '../shared/layout';
 
 interface PanelBridge {
   callsAttach(handle: Buffer, callback: (json: string) => void): void;
   callsUpdate(json: string): void;
+  callsComplete(token: string): void;
+  callsOwnsAlerts(): boolean;
   callsDispose(): void;
 }
 
 export class CallPanel {
   private bridge: PanelBridge;
-  constructor(private window: BrowserWindow, command: (command: ShellCommand) => void) {
+  private disposePromise?: Promise<void>;
+  private disposed?: () => void;
+  constructor(window: BrowserWindow, command: (command: ShellCommand) => Promise<void> | void) {
     this.bridge = require(join(__dirname, 'native/shell.node')) as PanelBridge;
     this.bridge.callsAttach(window.getNativeWindowHandle(), json => {
-      try { command(JSON.parse(json) as ShellCommand); } catch { /* Native commands still require main-process validation. */ }
+      let value: ShellCommand | { type: 'call-panel-disposed' };
+      try { value = JSON.parse(json) as typeof value; } catch { return; }
+      if (value.type === 'call-panel-disposed') { this.disposed?.(); return; }
+      void Promise.resolve().then(() => command(value)).finally(() => {
+        if (value.type === 'call-action' || value.type === 'test-call-action') {
+          this.bridge.callsComplete(value.callId);
+        }
+      }).catch(() => undefined);
     });
   }
   update(state: Snapshot, locked: boolean): void {
-    const [width, height] = this.window.getContentSize();
     this.bridge.callsUpdate(JSON.stringify({ enabled: state.preferences.notifications && state.preferences.floatingCalls && !locked,
-      cards: state.incomingCalls ?? [], shelfEnabled: !locked, width, height, shelfHeight: state.callShelfHeight ?? 0,
-      sidebarWidth: state.sidebarCollapsed ? SHELL_LAYOUT.railWidth : SHELL_LAYOUT.sidebarWidth, toolbarHeight: SHELL_LAYOUT.toolbarHeight,
-      rowHeight: SHELL_LAYOUT.callRowHeight }));
+      cards: state.incomingCalls ?? [], unlocked: !locked }));
   }
-  dispose(): void { this.bridge.callsDispose(); }
+  ownsAlerts(): boolean { return this.bridge.callsOwnsAlerts(); }
+  dispose(): Promise<void> {
+    return this.disposePromise ??= new Promise<void>(resolve => { this.disposed = resolve; this.bridge.callsDispose(); });
+  }
 }
 
 export function incomingCallCards(state: Snapshot, preview: (id: string) => { title: string; body: string } | undefined): IncomingCallCard[] {

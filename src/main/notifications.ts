@@ -34,7 +34,8 @@ export class Notifications {
     private select: (id: string) => void,
     private failed: () => void,
     private changed: () => void,
-    private calls: Calls
+    private calls: Calls,
+    private nativeCallAlert: () => boolean
   ) {}
 
   forward(entry: LiveAccount, pageId: string, title: string, body: string, tag: string, silent: boolean): void {
@@ -81,12 +82,16 @@ export class Notifications {
   }
 
   private show(entry: LiveAccount, key: string, pageId: string | null, title: string, body: string, tag: string, silent: boolean, ringId?: string): void {
-    if (!this.preferences().notifications || !Notification.isSupported() || this.delivered.has(key)) return;
+    if (!this.preferences().notifications || this.delivered.has(key)) return;
+    // The call sheet/panel owns this ring. Keep ordinary alerts in Notification Center.
+    if (ringId && this.nativeCallAlert()) { if (pageId) this.pageEvent(entry, pageId, 'show'); return; }
+    if (!Notification.isSupported()) return;
     for (const [oldKey, old] of this.delivered) {
       if (old.accountId === entry.state.id && tag && old.tag === tag) this.close(oldKey);
     }
     if (this.delivered.size >= 50) this.close(this.delivered.keys().next().value!);
-    const canAnswer = !!ringId && this.preferences().experimentalAnswer;
+    const canAnswer = !!ringId && this.preferences().experimentalAnswer && !!entry.state.callActions?.includes('answer')
+      && ![...this.accounts.entries.values()].some(account => account.state.inCall);
     const actions = [{ type: 'button' as const, text: canAnswer ? 'Answer' : ringId ? 'Open call' : 'Open workspace' }];
     if (ringId && entry.state.callActions?.includes('decline')) actions.push({ type: 'button', text: 'Decline' });
     const notification = new Notification({
@@ -105,8 +110,10 @@ export class Notifications {
       if (pageId) this.pageEvent(entry, pageId, 'click');
     };
     notification.on('click', open);
-    notification.on('action', (_event, index: number) => {
-      if (ringId && (canAnswer || index === 1)) void this.callAction(entry, ringId, index === 1 ? 'decline' : 'answer');
+    notification.on('action', (event, legacyIndex?: number) => {
+      const index = typeof event.actionIndex === 'number' ? event.actionIndex : legacyIndex;
+      if (index === undefined || !Number.isInteger(index) || index < 0 || index >= actions.length) return;
+      if (ringId && ((index === 0 && canAnswer) || (index === 1 && entry.state.callActions?.includes('decline')))) void this.callAction(entry, ringId, index === 1 ? 'decline' : 'answer');
       else open();
     });
     notification.on('show', () => { if (pageId) this.pageEvent(entry, pageId, 'show'); });
@@ -121,6 +128,7 @@ export class Notifications {
 
   simulation(entry: LiveAccount, callId: string, answer: () => void): void {
     if (!this.preferences().notifications || !Notification.isSupported()) return;
+    if (this.nativeCallAlert()) return;
     const key = `${entry.state.id}:simulation:${callId}`;
     const notification = new Notification({ title: entry.state.name, subtitle: 'Test call · local simulation', body: 'No phone call is placed. Answer to test the local controls.', actions: [{ type: 'button', text: 'Answer' }], closeButtonText: 'Dismiss' });
     notification.on('click', () => this.select(entry.state.id));
