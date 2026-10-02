@@ -48,8 +48,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: >-
-          gh release create "$RELEASE_TAG"
-          release/*.dmg release/*.zip release/SHA256SUMS release/sbom.cdx.json
-          --verify-tag --draft --prerelease --title "Switchboard $RELEASE_TAG"
-          --notes-file docs/release-notes.md
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release already exists; preserving its reviewed assets."
+          else
+            gh release create "$RELEASE_TAG" \
+              release/*.dmg release/*.zip release/SHA256SUMS release/sbom.cdx.json \
+              --verify-tag --draft --prerelease --title "Switchboard $RELEASE_TAG" \
+              --notes-file docs/release-notes.md
+          fi
