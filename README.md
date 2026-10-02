@@ -10,6 +10,10 @@ Switchboard gives each workspace its own saved browser session and keeps them ru
 
 [Download for Mac](https://github.com/ozeitis/quo-switchboard/releases) · [How it works](docs/architecture.md) · [Security](SECURITY.md) · [Build it yourself](#development)
 
+[![Watch the 34-second Switchboard walkthrough](docs/media/walkthrough-preview.gif)](docs/media/switchboard-walkthrough.mp4)
+
+[Watch the full walkthrough](docs/media/switchboard-walkthrough.mp4) · [Square video for X](docs/media/switchboard-social.mp4) · [Demo details](docs/walkthrough.md). Fictional data throughout. Call routing is simulated; no live audio.
+
 > **Early preview.** Account isolation and notification routing are covered by desktop tests. Real Quo calling, identity-provider login, and long-term session retention still need field testing. Answer from notifications is experimental and off by default. Popover call controls require recognized current Quo controls.
 
 ## What it does
