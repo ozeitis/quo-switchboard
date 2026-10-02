@@ -1,7 +1,6 @@
 #import <AppKit/AppKit.h>
 #import <QuartzCore/QuartzCore.h>
 #include <node_api.h>
-#include <cstring>
 #include <string>
 
 // The material is decorative. Masked-out areas must leave Quo's controls reachable.
@@ -75,6 +74,7 @@ static NSTextField *label(NSString *text, NSRect frame, CGFloat size) {
 }
 
 static NSString *status(NSDictionary *account) {
+  if ([account[@"simulation"] boolValue]) return [NSString stringWithFormat:@"Test call · %@%@", @{@"ringing":@"Incoming call", @"active":@"On a call", @"held":@"On hold"}[account[@"callPhase"]] ?: account[@"callPhase"], [account[@"muted"] boolValue] ? @" · Muted" : @""];
   if ([account[@"ringing"] boolValue] && ![account[@"inCall"] boolValue]) return @"Incoming call";
   if ([account[@"inCall"] boolValue]) {
     NSString *state = @{@"held":@"On hold", @"dialing":@"Dialing…", @"connecting":@"Connecting…", @"reconnecting":@"Reconnecting…", @"transferring":@"Transferring…", @"ending":@"Ending call…"}[account[@"callPhase"]] ?: @"On a call";
@@ -161,7 +161,7 @@ static NSImage *themePreview(NSDictionary *colors) {
   [image unlockFocus]; return image;
 }
 
-@interface ShellController : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate, NSTextFieldDelegate>
+@interface ShellController : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate, NSTextFieldDelegate, NSWindowDelegate>
 @property(weak) NSWindow *window;
 @property(weak) NSView *host;
 @property NSArray *originalAccessibilityChildren;
@@ -183,6 +183,17 @@ static NSImage *themePreview(NSDictionary *colors) {
 @property NSAlert *sheet;
 @property NSTextField *nameField;
 @property BOOL updating;
+@property NSWindow *settingsWindow;
+@property NSSegmentedControl *settingsTabs;
+@property NSView *settingsBody;
+@property NSPopUpButton *microphone;
+@property NSPopUpButton *diagnosticWorkspace;
+@property NSTextField *audioStatus;
+@property NSTextField *audioSync;
+@property NSLevelIndicator *audioMeter;
+@property NSButton *audioTest;
+@property NSButton *audioRefresh;
+@property NSScrollView *audioSyncScroll;
 @property NSString *themeId;
 @property NSMutableDictionary *themeDraft;
 @property NSArray<NSButton *> *themeCards;
@@ -193,10 +204,14 @@ static NSImage *themePreview(NSDictionary *colors) {
 - (void)emit:(NSDictionary *)command;
 - (void)update:(NSDictionary *)snapshot;
 - (void)form:(NSString *)identifier;
-- (void)settings;
 - (void)theme:(NSString *)identifier;
 - (void)dismiss;
 - (void)dispose;
+@end
+
+@interface ShellController (Settings)
+- (void)settings;
+- (void)refreshAudioSettings;
 @end
 
 @implementation ShellController
@@ -367,6 +382,15 @@ static NSImage *themePreview(NSDictionary *colors) {
   BOOL changed = ![_snapshot[@"appearance"] isEqual:snapshot[@"appearance"]] || ![_snapshot[@"preferences"][@"animateActivity"] isEqual:snapshot[@"preferences"][@"animateActivity"]] || collapseChanged || ![_accounts isEqual:snapshot[@"accounts"]] || ![_snapshot[@"activeId"] isEqual:snapshot[@"activeId"]];
   _snapshot = snapshot;
   _accounts = snapshot[@"accounts"] ?: @[];
+  if (snapshot[@"testCall"]) {
+    NSMutableArray *visual = [NSMutableArray array]; NSDictionary *test = snapshot[@"testCall"];
+    for (NSDictionary *account in _accounts) {
+      NSMutableDictionary *copy = [account mutableCopy];
+      if ([account[@"id"] isEqual:test[@"workspaceId"]]) { copy[@"simulation"] = @YES; copy[@"ringing"] = @([test[@"phase"] isEqual:@"ringing"]); copy[@"inCall"] = @(![test[@"phase"] isEqual:@"ringing"]); copy[@"callPhase"] = test[@"phase"]; copy[@"muted"] = test[@"muted"]; }
+      [visual addObject:copy];
+    }
+    _accounts = visual;
+  }
   NSInteger selected = -1;
   for (NSUInteger i = 0; i < _accounts.count; ++i) if ([_accounts[i][@"id"] isEqual:snapshot[@"activeId"]]) selected = i;
   if (changed) {
@@ -381,7 +405,7 @@ static NSImage *themePreview(NSDictionary *colors) {
   _more.enabled = YES;
   _add.enabled = _accounts.count < 12;
   _updating = NO;
-  [self refreshThemeCards];
+  [self refreshThemeCards]; [self refreshAudioSettings];
   if (collapseChanged && !NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion && [_snapshot[@"preferences"][@"animateActivity"] boolValue]) {
     _table.alphaValue = 0;
     [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
@@ -538,55 +562,6 @@ static NSImage *themePreview(NSDictionary *colors) {
   name.stringValue = account[@"name"] ?: @"";
   [name selectText:nil];
 }
-- (void)settings {
-  if (_window.attachedSheet) { [_window.attachedSheet makeKeyAndOrderFront:nil]; return; }
-  NSAlert *alert = [[NSAlert alloc] init];
-  alert.messageText = @"Switchboard settings";
-  alert.informativeText = @"Closing the window keeps every workspace running. Quitting stops calls and notifications.";
-  [alert addButtonWithTitle:@"Save"];
-  [alert addButtonWithTitle:@"Cancel"];
-  NSView *fields = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 380, 322)];
-  NSArray *keys = @[@"notifications", @"privateNotifications", @"launchAtLogin", @"showMenuBar", @"menuBarCount", @"experimentalAnswer", @"animateActivity"];
-  NSArray *titles = @[@"Desktop notifications", @"Hide caller and message previews", @"Open Switchboard at login", @"Show Switchboard in the menu bar", @"Show unread count in the menu bar", @"Answer from notifications (experimental)", @"Animate call activity"];
-  NSMutableArray<NSButton *> *buttons = [NSMutableArray array];
-  for (NSUInteger i = 0; i < keys.count; ++i) {
-    NSButton *button = [NSButton checkboxWithTitle:titles[i] target:nil action:nil];
-    button.frame = NSMakeRect(0, 292 - i * 28, 380, 24);
-    button.state = [_snapshot[@"preferences"][keys[i]] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
-    [buttons addObject:button];
-    [fields addSubview:button];
-  }
-  [fields addSubview:label(@"Menu bar", NSMakeRect(0, 82, 82, 22), 12)];
-  NSPopUpButton *layout = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(88, 80, 280, 26) pullsDown:NO];
-  [layout addItemsWithTitles:@[@"One icon per workspace", @"One combined icon"]];
-  [layout selectItemAtIndex:[_snapshot[@"preferences"][@"menuBarLayout"] isEqual:@"combined"] ? 1 : 0];
-  layout.accessibilityLabel = @"Menu bar layout"; [fields addSubview:layout];
-  NSTextField *delivery = label(@"macOS can silence banners during Focus or screen sharing.", NSMakeRect(0, 49, 380, 16), 11);
-  delivery.textColor = NSColor.secondaryLabelColor;
-  [fields addSubview:delivery];
-  NSTextField *note = label(@"Direct answering depends on Quo’s current call controls.", NSMakeRect(0, 31, 380, 16), 11);
-  note.textColor = NSColor.secondaryLabelColor;
-  [fields addSubview:note];
-  NSButton *test = [self button:@"Test notification" symbol:@"bell" frame:NSMakeRect(0, 0, 154, 26) action:@selector(testNotification:) parent:fields];
-  test.enabled = [_snapshot[@"activeId"] isKindOfClass:NSString.class] && [_snapshot[@"preferences"][@"notifications"] boolValue];
-  alert.accessoryView = fields;
-  alert.window.preventsApplicationTerminationWhenModal = NO;
-  _sheet = alert;
-  __weak ShellController *weakSelf = self;
-  [alert beginSheetModalForWindow:_window completionHandler:^(NSModalResponse response) {
-    ShellController *owner = weakSelf;
-    if (response == NSAlertFirstButtonReturn) {
-      NSMutableDictionary *preferences = [NSMutableDictionary dictionary];
-      for (NSUInteger i = 0; i < keys.count; ++i) preferences[keys[i]] = @(buttons[i].state == NSControlStateValueOn);
-      preferences[@"menuBarLayout"] = layout.indexOfSelectedItem == 1 ? @"combined" : @"separate";
-      [owner emit:@{@"type": @"preferences", @"preferences": preferences}];
-    }
-    owner.sheet = nil;
-  }];
-}
-- (void)testNotification:(id)sender {
-  if ([_snapshot[@"activeId"] isKindOfClass:NSString.class]) [self emit:@{@"type": @"test-notification", @"id": _snapshot[@"activeId"]}];
-}
 - (void)refreshThemeCards {
   if (!_themeId) return;
   NSArray *catalog = _snapshot[@"themeCatalog"];
@@ -649,6 +624,7 @@ static NSImage *themePreview(NSDictionary *colors) {
 }
 - (void)dismiss { if (_window.attachedSheet) [_window endSheet:_window.attachedSheet returnCode:NSModalResponseCancel]; }
 - (void)dispose {
+  [_settingsWindow close];
   [self dismiss];
   [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:self];
   [NSNotificationCenter.defaultCenter removeObserver:self];
@@ -662,6 +638,8 @@ static NSImage *themePreview(NSDictionary *colors) {
   if (_callback) { napi_release_threadsafe_function(_callback, napi_tsfn_abort); _callback = nullptr; }
 }
 @end
+
+#include "settings.mm"
 
 static ShellController *controller;
 static void deliver(napi_env env, napi_value callback, void *, void *data) {
@@ -737,45 +715,17 @@ static napi_value environment(napi_env env, napi_callback_info info) {
 static napi_value settings(napi_env env, napi_callback_info info) { [controller settings]; return nullptr; }
 static napi_value dismiss(napi_env env, napi_callback_info info) { [controller dismiss]; return nullptr; }
 static napi_value dispose(napi_env env, napi_callback_info info) { [controller dispose]; controller = nil; return nullptr; }
-static napi_value image(napi_env env, napi_callback_info info) {
-  size_t count = 1; napi_value arg;
-  napi_get_cb_info(env, info, &count, &arg, nullptr, nullptr);
-  NSString *json = count ? stringArgument(env, arg) : nil;
-  NSDictionary *options = json ? [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil] : nil;
-  if (![options isKindOfClass:NSDictionary.class] || !NSThread.isMainThread) {
-    napi_throw_error(env, nullptr, "Native images require options on the main thread"); return nullptr;
-  }
-  NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:nil pixelsWide:36 pixelsHigh:36 bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
-  std::memset(bitmap.bitmapData, 0, bitmap.bytesPerRow * bitmap.pixelsHigh);
-  [NSGraphicsContext saveGraphicsState];
-  NSGraphicsContext.currentContext = [NSGraphicsContext graphicsContextWithBitmapImageRep:bitmap];
-  NSAffineTransform *scale = [NSAffineTransform transform];
-  [scale scaleBy:2];
-  [scale concat];
-  BOOL avatarType = [options[@"type"] isEqual:@"avatar"];
-  NSString *phase = options[@"state"] ?: @"idle";
-  BOOL busy = ![phase isEqual:@"idle"];
-  if (avatarType) {
-    WorkspaceAvatar *avatar = [[WorkspaceAvatar alloc] initWithFrame:NSMakeRect(0, 0, 18, 18)]; avatar.account = options; [avatar drawRect:avatar.bounds];
-  }
-  if (!avatarType || busy) {
-    NSRect rect = avatarType ? NSMakeRect(8, 0, 10, 10) : NSMakeRect(1, 1, 16, 16);
-    if (avatarType) { [callColor(phase) setFill]; [[NSBezierPath bezierPathWithOvalInRect:rect] fill]; rect = NSInsetRect(rect, 2, 2); }
-    NSImage *icon = [NSImage imageWithSystemSymbolName:busy ? callSymbol(phase) : @"rectangle.stack" accessibilityDescription:nil];
-    if (!icon) icon = [NSImage imageWithSystemSymbolName:@"phone.fill" accessibilityDescription:nil];
-    NSColor *tint = avatarType ? NSColor.whiteColor : busy ? callColor(phase) : NSColor.blackColor;
-    if ([phase isEqual:@"ringing"] && [options[@"frame"] intValue]) tint = [tint colorWithAlphaComponent:0.55];
-    icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[tint]]]; [icon drawInRect:rect];
-  }
-  [NSGraphicsContext restoreGraphicsState];
-  NSData *png = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
-  napi_value result;
-  napi_create_buffer_copy(env, png.length, png.bytes, nullptr, &result);
-  return result;
-}
-static void cleanup(void *) { [controller dispose]; controller = nil; }
+#include "activity.mm"
+
+static void cleanup(void *) { [activityController dispose]; activityController = nil; [controller dispose]; controller = nil; }
 static napi_value initialize(napi_env env, napi_value exports) {
   napi_property_descriptor properties[] = {
+    {"statusAttach", nullptr, statusAttach, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"statusUpdate", nullptr, statusUpdate, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"statusFrame", nullptr, statusFrame, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"statusShow", nullptr, statusShow, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"statusInspect", nullptr, statusInspect, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"statusDispose", nullptr, statusDispose, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"attach", nullptr, attach, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"update", nullptr, update, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"form", nullptr, form, nullptr, nullptr, nullptr, napi_default, nullptr},
@@ -784,7 +734,6 @@ static napi_value initialize(napi_env env, napi_value exports) {
     {"settings", nullptr, settings, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"dismiss", nullptr, dismiss, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"dispose", nullptr, dispose, nullptr, nullptr, nullptr, napi_default, nullptr},
-    {"image", nullptr, image, nullptr, nullptr, nullptr, napi_default, nullptr}
   };
   napi_define_properties(env, exports, sizeof(properties) / sizeof(properties[0]), properties);
   napi_add_env_cleanup_hook(env, cleanup, nullptr);

@@ -1,6 +1,6 @@
 {
   "name": "quo-switchboard",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "A Mac home for your Quo workspaces.",
   "private": true,
   "main": "dist/main.cjs",

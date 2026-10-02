@@ -47,3 +47,27 @@ export function readCallState(root: Document): { inCall: boolean; callPhase: Cal
     [/^(ending|disconnecting)( call)?(…|\.\.\.)?$/i, 'ending'], [/^connecting(…|\.\.\.)?$/i, 'connecting'], [/^(dialing|calling)(…|\.\.\.)?$/i, 'dialing']];
   return { inCall: true, callPhase: phases.find(([pattern]) => markers.some(marker => pattern.test(marker)))?.[1] ?? (held ? 'held' : 'active'), muted };
 }
+
+export function callButtons(root: Document): Partial<Record<import('../shared/model').CallAction, HTMLElement>> {
+  const answer = findAnswerButton(root);
+  const result: Partial<Record<import('../shared/model').CallAction, HTMLElement>> = {};
+  if (answer) result.answer = answer;
+  const controls = Array.from(root.querySelectorAll<HTMLElement>('button, [role="button"]')).filter(usable);
+  const ends = controls.filter(element => /^(end call|hang up|hangup)$/i.test(label(element)));
+  if (ends.length === 1) result.end = ends[0];
+  const anchor = answer ?? (ends.length === 1 ? ends[0] : undefined);
+  const region = anchor?.closest<HTMLElement>('[role="dialog"], [role="alertdialog"], [aria-label="Call controls"], [aria-label="Active call"]');
+  if (!region) return result;
+  const patterns: [import('../shared/model').CallAction, RegExp][] = answer
+    ? [['decline', /^(decline|reject)( call)?$/i]]
+    : [['mute', /^mute( microphone)?$/i], ['unmute', /^unmute( microphone)?$/i], ['hold', /^hold( call)?$/i], ['resume', /^(resume|unhold)( call)?$/i]];
+  for (const [action, pattern] of patterns) {
+    const matches = controls.filter(element => region.contains(element) && pattern.test(label(element)));
+    if (matches.length === 1) {
+      const element = matches[0]!;
+      const target = element.getAttribute('aria-pressed') === 'true' ? action === 'mute' ? 'unmute' : action === 'hold' ? 'resume' : action : action;
+      result[target] = element;
+    }
+  }
+  return result;
+}

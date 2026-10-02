@@ -6,7 +6,7 @@ Switchboard owns the desktop container. Quo owns authentication, communications,
 
 ```mermaid
 flowchart TB
-  Native[AppKit sidebar, toolbar, sheets\nPublic macOS APIs] -->|Node-API callback| Main[Electron main process]
+  Native[AppKit sidebar, toolbar, sheets,\nSettings and activity popover\nPublic macOS APIs] -->|Node-API callback| Main[Electron main process]
   Shell[Local content renderer\nNo network access] -->|Validated commands| Main
   Main --> Store[workspaces.json\nNames, IDs, preferences]
   Main --> Health[health.json\nLocal page-liveness samples]
@@ -16,7 +16,7 @@ flowchart TB
   B --> PB[Sandboxed page adapter]
   PA -->|Bound to actual sender| Main
   PB -->|Bound to actual sender| Main
-  Main --> OS[macOS menus, notifications, tray]
+  Main --> OS[macOS menus, notifications, status items]
 ```
 
 `Accounts` retains one view per workspace. Switching changes selection and visibility. Each UUID selects an independent Chromium session, including cookies and website storage. Renaming, recoloring, and reordering never replace that UUID. A duplicate UUID in the settings file is rejected rather than silently sharing a login.
@@ -35,7 +35,11 @@ Native table rows draw an inset selection inside the actual viewport; extra AppK
 
 Settings are validated on read and write, saved through a temporary file and rename, and created with owner-only file permissions. A malformed settings file stops startup without replacing it. Browser profiles live outside the application bundle under `~/Library/Application Support/Switchboard`.
 
-`MenuBar` owns one native status item per workspace, or one combined item when selected in Settings. UUIDs provide stable identities. AppKit renders initials and semantic call symbols at Retina resolution. Every workspace menu scopes its count and test notification to its own account, even while another account is selected. Layout changes destroy obsolete items; hiding or quitting clears them all. A single 650 ms timer animates only ringing icons. It stops on idle, hidden menu bar, Reduce Motion, or disabled activity animation. Images have a bounded cache.
+`MenuBar` supplies a compact AppKit status item and a native `NSPopover`. One item is the default; separate workspace items and visible counts are optional. Stable autosave identities preserve placement. macOS 27 uses `NSStatusItemExpandedInterfaceDelegate` for expanded-interface focus and lifecycle; older supported systems use a normal status-button action. The panel shows every workspace, observed unread counts, current call controls, and four recent forwarded Quo alerts. Alert history is bounded to twenty items, held only in memory, and redacted by the private-preview setting. A single 650 ms timer animates only ringing symbols and stops for Reduce Motion, hidden items, or disabled animation. Ring frames do not rebuild the panel.
+
+Settings is a separate nonmodal AppKit window with General, Audio, and Diagnostics sections. Preferences apply immediately through validated single-field commands. Audio selects a shared microphone label; each sandboxed profile independently resolves its origin-specific media device ID. Existing streams remain intact. Local refresh and input tests release their tracks and are blocked during recognized calls or captures. See [audio architecture](audio.md).
+
+`Calls` revalidates source workspace, current call token, and available action in the main process. The preload repeats validation against the live DOM before clicking exactly one recognized control and acknowledges the request. Stale, replaced, or ambiguous controls fail closed. Answering selects the originating workspace and is blocked if another recognized call is active. The diagnostics simulator uses separate local state, expires after a minute, and never manipulates Quo call controls or unread counts.
 
 The unread adapter reads Quo's semantic navigation badge labels, with a title fallback. It reports unavailable counts explicitly and preserves hovered-row counts while Quo displays More in place of a badge. It never sums the title with sidebar badges or counts the selected conversation list again. Unread changes update the rail, Dock, and status item; they do not replay old desktop alerts. See [count semantics and menu-bar design](menu-bar.md).
 
@@ -75,7 +79,7 @@ Page notifications retain their original click callback. The adapter does not re
 
 Incoming-call observation uses accessible button labels, never screen coordinates. A ring token identifies the lifetime of one exact DOM control. Removal or replacement invalidates the token. Two candidate controls revoke direct answering. English labels currently supported: “Answer call”, “Accept call”, or “Answer” / “Accept” inside a dialog explicitly containing “Incoming call”. No private Quo API is called.
 
-This cannot establish a durable server call ID or prove transport health. A webpage can change faster than the adapter. Direct answering therefore defaults off and is labeled experimental. Call-state inference also means cross-account busy detection is conservative only for recognized controls; it is not a replacement for provider-level call coordination.
+This cannot establish a durable server call ID or prove transport health. A webpage can change faster than the adapter. Answer from notifications therefore defaults off and is labeled experimental. Popover call controls are available only while a current unambiguous control is recognized; they share the same UI-observation limitation. Call-state inference also means cross-account busy detection is conservative only for recognized controls; it is not a replacement for provider-level call coordination.
 
 ## Lifecycle
 
@@ -116,14 +120,19 @@ No relay, API key storage, server, or paid subscription is part of this release.
 | `src/main/index.ts` | App lifecycle, menus, IPC authorization, command routing |
 | `src/main/accounts.ts` | Profile isolation, navigation, permissions, views |
 | `src/main/text-menu.ts` | Native text menus bound to their originating browser view |
-| `src/main/menu-bar.ts` | Native status item, per-workspace menu, and display preferences |
+| `src/main/menu-bar.ts` | Native activity models, status-item preferences, ringing animation |
 | `src/preload/appearance.ts` | Scoped Quo navigation and typography adaptation |
 | `src/preload/unread.ts` | Semantic unread badge observation and unavailable-state reporting |
-| `src/main/notifications.ts` | Native notifications and account-bound actions |
+| `src/main/notifications.ts` | Native notifications, session-only activity, account-bound actions |
+| `src/main/calls.ts` | Guarded current-call commands and acknowledgements |
+| `src/preload/audio.ts` | Profile-local microphone resolution and local input tests |
+| `src/shared/audio.ts` | Validated shared microphone preferences and state |
 | `src/main/store.ts` | Validated settings persistence |
 | `src/main/policy.ts` | URL policy, text normalization, rate limits |
 | `src/main/native-shell.ts` | Main-process-only native bridge |
-| `native/shell.mm` | AppKit controls, sheets, menus, accessibility |
+| `native/shell.mm` | AppKit shell, sheets, menus, accessibility |
+| `native/activity.mm` | Native status items and activity popover |
+| `native/settings.mm` | Native General, Audio, and Diagnostics settings |
 | `src/shared/layout.ts` | Shared native/browser/renderer geometry |
 | `src/main/health.ts` | Local liveness evidence and bounded recovery policy |
 | `src/main/window-state.ts` | Window geometry persistence |

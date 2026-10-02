@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { appOrigin, accountNavigation, externalURL } from './policy';
 import { partitionFor, type Account, type AccountState } from '../shared/model';
 import { Health, RecoveryBudget } from './health';
+import type { AudioPreferences } from '../shared/audio';
 import type { AppearanceOptions } from '../shared/theme';
 import { installTextMenu } from './text-menu';
 
@@ -18,7 +19,7 @@ export class Accounts {
   readonly entries = new Map<string, LiveAccount>();
   private allowedPermissions = new Set(['notifications', 'media', 'speaker-selection', 'fullscreen', 'clipboard-sanitized-write']);
   private closing = false;
-  constructor(private window: BrowserWindow, private changed: () => void, private reset: (id: string) => void, private health: Health, private appearance: (id: string) => AppearanceOptions) {}
+  constructor(private window: BrowserWindow, private changed: () => void, private reset: (id: string) => void, private health: Health, private appearance: (id: string) => AppearanceOptions, private audio: () => AudioPreferences) {}
 
   create(account: Account): LiveAccount {
     const profile = session.fromPartition(partitionFor(account.id));
@@ -69,6 +70,7 @@ export class Accounts {
       entry.state.inCall = false;
       entry.state.callPhase = 'idle';
       entry.state.muted = false;
+      entry.state.callId = undefined; entry.state.callActions = []; entry.state.audio = undefined;
       entry.state.themeSupport = 'waiting';
       entry.state.status = 'loading';
       this.changed();
@@ -76,11 +78,11 @@ export class Accounts {
     const finishedLoading = () => {
       if (entry.state.status === 'loading') entry.state.status = appOrigin(contents.getURL()) ? 'ready' : 'sign-in';
       this.applyZoom(entry);
-      if (appOrigin(contents.getURL())) this.configureAppearance(entry);
+      if (appOrigin(contents.getURL())) { this.configureAppearance(entry); this.configureAudio(entry); }
       if (entry.state.status !== 'error') { clearTimeout(entry.retry); entry.retry = undefined; }
       this.changed();
     };
-    contents.on('dom-ready', () => this.configureAppearance(entry));
+    contents.on('dom-ready', () => { this.configureAppearance(entry); this.configureAudio(entry); });
     contents.on('did-finish-load', finishedLoading);
     contents.on('did-stop-loading', finishedLoading);
     contents.on('did-fail-load', (_event, code, _description, _url, mainFrame) => {
@@ -91,6 +93,10 @@ export class Accounts {
     contents.on('responsive', () => this.health.record('responsive', account.id));
     void contents.loadURL('https://my.quo.com').catch(() => this.failed(entry));
     return entry;
+  }
+
+  configureAudio(entry: LiveAccount): void {
+    if (!entry.view.webContents.isDestroyed() && appOrigin(entry.view.webContents.getURL())) entry.view.webContents.send('account:audio', this.audio());
   }
 
   configureAppearance(entry: LiveAccount): void {
@@ -112,6 +118,7 @@ export class Accounts {
     entry.state.inCall = false;
     entry.state.callPhase = 'idle';
     entry.state.muted = false;
+      entry.state.callId = undefined; entry.state.callActions = []; entry.state.audio = undefined;
     entry.state.themeSupport = 'waiting';
     this.changed();
     this.scheduleRecovery(entry);

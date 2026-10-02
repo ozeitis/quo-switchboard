@@ -1,3 +1,15 @@
+Switchboard for Quo 0.4.0 — native activity and shared microphone controls.
+
+- A compact menu-bar icon opens a native popover with all workspaces, observed unread counts, current calls, and recent forwarded Quo alerts. Separate icons and counts remain optional.
+- Recognized current calls expose Answer, Decline, Mute/Unmute, Hold/Resume, and End. Actions revalidate their source; another active call blocks Answer.
+- Native Settings has General, Audio, and Diagnostics. Preferences apply immediately. Connection health and debug tools are no longer in the activity panel.
+- One microphone choice resolves independently in every browser profile. Existing calls keep their microphone; missing or duplicate devices fail visibly. A ten-second local input meter records nothing.
+- A labeled local call simulator exercises notification and control routing without placing a phone call or altering Quo state.
+
+Live Quo call controls, physical microphones, Bluetooth recovery, Intel execution, and long-term idle behavior still require field testing. Quo owns session renewal. Installers are ad-hoc signed, not Apple-notarized.
+
+Version 0.3.1 added workspace palettes, a native theme picker, observable call states, and Reduce Motion support.
+
 Switchboard for Quo 0.2.5 — unread badges and a native workspace menu bar.
 
 - Workspace badges now observe Quo's inbox navigation, instead of relying only on its window title. Hovering More does not drop a known inbox count. Missing counts are reported as unavailable.
@@ -36,12 +48,12 @@ Version 0.2 introduced native workspace controls and recovery diagnostics:
 - Native AppKit sidebar, compact workspace rail, workspace/settings sheets, semantic colors, and macOS Liquid Glass.
 - Collapse with ⌘⇧L; unread and call indicators remain visible. Rename, recolor, and reorder without replacing sessions.
 - Bounded recovery after page failures or renderer crashes. Healthy pages stay loaded through idle and wake.
-- Local page-liveness reports under Help → Connection health. Cookie-store flushes are awaited before quitting.
+- Local page-liveness reports, now under Settings → Diagnostics → Connection health. Cookie-store flushes are awaited before quitting.
 - Window position, size, and sidebar mode survive relaunch.
 - Native notifications labeled by workspace, with click routing back to the source.
 - Optional experimental answering through Quo’s existing visible controls.
 - Apple Silicon and Intel DMGs, source, checksums, and dependency inventory.
 
-Applications are ad-hoc signed, not Apple-notarized. macOS may require **Privacy & Security → Open Anyway**. This preview does not promise permanent sign-in or verified live-call reliability. Direct answering is off by default. Quo’s session rules still apply.
+Applications are ad-hoc signed, not Apple-notarized. macOS may require **Privacy & Security → Open Anyway**. This preview does not promise permanent sign-in or verified live-call reliability. Answer from notifications is off by default. Quo’s session rules still apply.
 
 The test suite uses controlled pages. Complete the real-account checklist in `docs/testing.md` before relying on this app for business calls. No Quo credentials, call recordings, or customer data are included.

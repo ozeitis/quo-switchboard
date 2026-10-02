@@ -43,7 +43,7 @@ test('menu bar preferences migrate without resetting existing notification choic
   const legacy = { ...emptyConfig(), preferences: { ...preferences, notifications: false, privateNotifications: true } };
   const restored = parseConfig(legacy);
   assert.equal(restored.preferences.showMenuBar, true);
-  assert.equal(restored.preferences.menuBarCount, true);
+  assert.equal(restored.preferences.menuBarCount, false);
   assert.equal(restored.preferences.notifications, false);
   assert.equal(restored.preferences.privateNotifications, true);
   for (const value of [null, 'true', 1]) assert.throws(() => parseConfig({ ...legacy, preferences: { ...legacy.preferences, showMenuBar: value } }));

@@ -1,7 +1,8 @@
 import { Notification, dialog, type BrowserWindow } from 'electron';
 import type { LiveAccount, Accounts } from './accounts';
 import { cleanText } from './policy';
-import type { Preferences } from '../shared/model';
+import { randomUUID } from 'node:crypto';
+import type { ActivityItem, Preferences } from '../shared/model';
 
 interface Delivered {
   accountId: string;
@@ -13,18 +14,27 @@ interface Delivered {
 
 export class Notifications {
   private delivered = new Map<string, Delivered>();
+  private history: (ActivityItem & { pageId: string })[] = [];
+  activity(): ActivityItem[] { return this.history.map(({ pageId: _page, ...item }) => this.preferences().privateNotifications ? { ...item, title: 'Quo activity', body: 'Open the workspace to view it.' } : item); }
+  openActivity(id: string): void {
+    const item = this.history.find(item => item.id === id); const entry = item && this.accounts.entries.get(item.workspaceId);
+    if (item && entry) { this.select(entry.state.id); this.pageEvent(entry, item.pageId, 'click'); }
+  }
   private pending = new Map<string, ReturnType<typeof setTimeout>>();
   constructor(
     private window: BrowserWindow,
     private accounts: Accounts,
     private preferences: () => Preferences,
     private select: (id: string) => void,
-    private failed: () => void
+    private failed: () => void,
+    private changed: () => void
   ) {}
 
   forward(entry: LiveAccount, pageId: string, title: string, body: string, tag: string, silent: boolean): void {
     const key = `${entry.state.id}:${pageId}`;
     if (this.delivered.has(key) || this.pending.has(key)) return;
+    this.history.unshift({ id: randomUUID(), workspaceId: entry.state.id, pageId, title: cleanText(title, 160), body: cleanText(body, 160), at: Date.now() });
+    this.history.splice(20); this.changed();
     const callLike = /\b(incoming call|is calling|calling you|call from)\b/i.test(`${title} ${body}`);
     const timer = setTimeout(() => {
       this.pending.delete(key);
@@ -85,6 +95,18 @@ export class Notifications {
     notification.show();
   }
 
+  simulation(entry: LiveAccount, callId: string, answer: () => void): void {
+    if (!this.preferences().notifications || !Notification.isSupported()) return;
+    const key = `${entry.state.id}:simulation:${callId}`;
+    const notification = new Notification({ title: entry.state.name, subtitle: 'Test call · local simulation', body: 'No phone call is placed. Answer to test the local controls.', actions: [{ type: 'button', text: 'Answer' }], closeButtonText: 'Dismiss' });
+    notification.on('click', () => this.select(entry.state.id));
+    notification.on('action', answer);
+    notification.on('failed', () => this.failed());
+    notification.on('close', () => this.forget(key));
+    const timer = setTimeout(() => this.close(key), 60_000);
+    this.delivered.set(key, { accountId: entry.state.id, pageId: null, tag: 'test-call', notification, timer }); notification.show();
+  }
+
   private async answer(entry: LiveAccount, id: string): Promise<void> {
     if (entry.ringId !== id || !this.preferences().experimentalAnswer) return;
     const busy = [...this.accounts.entries.values()].find(account => account.state.inCall);
@@ -115,6 +137,7 @@ export class Notifications {
     item?.notification.close();
   }
   reset(accountId: string): void {
+    this.history = this.history.filter(item => item.workspaceId !== accountId);
     for (const key of this.pending.keys()) if (key.startsWith(`${accountId}:`)) this.close(key);
     for (const [key, item] of this.delivered) if (item.accountId === accountId) this.close(key);
   }

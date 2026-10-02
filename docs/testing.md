@@ -1,6 +1,12 @@
 # Verification
 
-## Local validation — October 1, 2026
+## Local validation — October 2, 2026
+
+Version 0.4.0 passes strict TypeScript checks, all 16 unit tests, and all 28 desktop tests. The focused activity/call/audio/animation cases also pass. One earlier run stalled in test teardown after every assertion in the activity case passed. Teardown now performs the normal quit path with the isolated fixture's call guard confirmed; the complete rerun passes. A final microphone cleanup refinement passes the audio regression again.
+
+Both architecture bundles pass strict code-signature verification, both DMGs pass disk-image verification, and all four archive checksums verify. The package audit confirms version 0.4.0, the native module, no test fixtures, encrypted cookies, disabled Node/inspector entry points, and ASAR integrity. A CycloneDX dependency inventory accompanies the installers.
+
+The macOS 27 native preview verifies the activity popover, source workspace controls, recent forwarded alerts, current-workspace checkmark, and the General and Audio settings sections. The Mac locked during the final device-picker check. The earlier controlled preview verified synthetic device selection across both profiles, the input meter, and labeled simulation Answer/Hold/Resume controls. Real status-item pointer clicks, live Quo calls, physical microphones, the complete OS accessibility matrix, and the 24–48-hour soak remain unverified.
 
 Version 0.3.1 adds distinct themed hover/pressed fills and stronger foreground accents. Contrast checks include every solid-control state. The native 0.3.0 package restored both live signed-in workspaces, matching the prior observed counts and retaining the collapsed sidebar. Native Settings confirms separate menu items and activity animation as migrated defaults, without changing notification choices. A live Iris/dark preview opens from Workspace options without a compatibility warning; Cancel restores the original appearance and saves no theme. All profile UUIDs remain unchanged. The initial UI control connection closed once, then reconnected to the running app; no app restart was required.
 
@@ -58,6 +64,9 @@ Desktop coverage includes:
 - Per-workspace themes cover portal/editor menus, preserve warning colors, restore on cancellation, survive restart, and leave authentication untouched. Unknown theme contracts fall back to original colors.
 - Explicit current-call markers drive held/muted/connection/transfer states; disabled End controls remain busy and historical statuses are ignored.
 - Separate menu-bar items preserve source-specific counts/actions; ringing animation stops when disabled or under system Reduce Motion.
+- Guarded popover call commands answer the originating workspace, operate mute/hold/resume/end, and reject stale tokens or another active call.
+- Shared microphone labels resolve to different device IDs in separate profiles, survive restart, preserve existing streams, and reject missing inputs. Local tests stop when switching workspaces and are blocked during captures.
+- Diagnostic calls exercise local controls and a notification Answer callback without invoking Quo call buttons or changing unread counts.
 - Native menu-bar rows follow unread counts and call state, select the source workspace while the window is closed, and retain visibility/count preferences across restart. A partial count is labeled explicitly; desktop alert toggles do not hide unread activity.
 
 These tests do not certify native notification delivery, Quo’s actual call interface, or a provider’s session policy.
@@ -83,14 +92,14 @@ SWITCHBOARD_TEST_DATA=/tmp/switchboard-native-review npm start
 - Collapse/expand; badges and call indicators remain visible, the page gains space, and the saved mode survives relaunch.
 - Resize with Quo's own navigation visible; verify labels remain readable and the conversation controls fit. Test View → Use Mac Fonts and ⌘+ / ⌘− / ⌘0 across workspaces.
 - Right-click a disposable draft. Test spelling suggestions, Undo/Redo, Select All, and normal clipboard commands; Quo's own application menus must remain usable.
-- Open the menu-bar item: verify account colors/counts, ringing priority, switching, Test notification, and settings. Compare badge totals with Quo's visible unmuted inboxes; separately inspect muted/overflow direct messages and real macOS delivery.
+- Open the menu-bar popover: verify account colors/counts, ringing priority, switching, recent-alert routing, current call controls, and Settings. Test separate/combined layouts and optional counts under Settings → General. Check notification tests and local call simulation under Diagnostics. Compare badge totals with Quo's visible unmuted inboxes; separately inspect muted/overflow direct messages and real macOS delivery.
 - Check light/dark appearance, Reduce Motion, Reduce Transparency, Increase Contrast, and VoiceOver on supported macOS versions.
 
 ## 24–48-hour idle acceptance
 
 1. Start the packaged build, sign into both organizations, and verify one incoming call and message per organization.
 2. Keep the app running with its window closed. Record whether the Mac remains awake or sleeps; these are different scenarios.
-3. After 24 hours, inspect **Help → Connection health**. Repeat the incoming call/message checks with the opposite workspace selected.
+3. After 24 hours, inspect **Settings → Diagnostics → Connection health**. Repeat the incoming call/message checks with the opposite workspace selected.
 4. At 48 hours, repeat with the window closed, then after sleep/wake and network reconnection. Confirm the correct workspace opens from each notification.
 5. Copy `~/Library/Application Support/Switchboard/health.json` before quitting. Record any reauthentication prompt, missed call/message, page stall, or recovery event.
 
@@ -103,14 +112,16 @@ Run before depending on Switchboard for business calls. Use consenting test part
 - [ ] Sign into two organizations independently with the intended login method.
 - [ ] Quit and reopen. Verify both organizations retain their valid sessions.
 - [ ] Install a newer build. Verify workspace IDs and profiles survive.
-- [ ] Enable macOS notifications and microphone access; verify Settings → Test notification.
+- [ ] Enable macOS notifications and microphone access; verify Settings → Diagnostics → Test notification.
 - [ ] Receive calls for each organization while the other is selected.
 - [ ] Verify caller, receiving line, and organization details when supplied by Quo.
 - [ ] Receive calls with the window minimized and closed but the app still running.
 - [ ] Verify notification click opens the correct account.
 - [ ] Test experimental Answer only after ordinary answering works. Disable it if Quo’s controls are not recognized consistently.
 - [ ] Test both accounts ringing together, one active call, and a call answered on another device.
-- [ ] Change microphone and Bluetooth devices during a test call.
+- [ ] Select the shared microphone under Settings → Audio and verify every profile reports Ready. Run the local input test.
+- [ ] Place a new call in each workspace and verify the selected physical input. Changes during a call must leave its current microphone intact.
+- [ ] Unplug/reconnect the selected microphone; verify missing-device reporting and no silent fallback. Test duplicate device names and Bluetooth transitions.
 - [ ] Lose and restore connectivity; sleep and wake the Mac.
 - [ ] Test Focus mode, denied notification permission, and denied microphone permission.
 - [ ] Observe resource use and session retention for several days; separately test the documented session-expiry boundary.

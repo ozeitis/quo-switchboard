@@ -1,3 +1,4 @@
+import { DEFAULT_AUDIO, validAudio, type AudioPreferences, type AudioState } from './audio';
 import { cleanTheme, validTheme, type AppearanceOptions, type WorkspaceTheme } from './theme';
 
 export const COLORS = ['slate', 'blue', 'green', 'amber', 'rose', 'violet'] as const;
@@ -6,6 +7,8 @@ export type Status = 'loading' | 'ready' | 'sign-in' | 'offline' | 'error';
 
 export interface Account { id: string; name: string; color: Color; zoom?: number; theme?: WorkspaceTheme }
 export const CALL_PHASES = ['idle', 'ringing', 'dialing', 'connecting', 'active', 'held', 'reconnecting', 'transferring', 'ending'] as const;
+export const CALL_ACTIONS = ['answer', 'decline', 'mute', 'unmute', 'hold', 'resume', 'end'] as const;
+export type CallAction = typeof CALL_ACTIONS[number];
 export type CallPhase = typeof CALL_PHASES[number];
 export type ThemeSupport = 'unmodified' | 'waiting' | 'compatible' | 'unsupported';
 export interface Preferences {
@@ -25,6 +28,7 @@ export interface Config {
   accounts: Account[];
   activeId: string | null;
   preferences: Preferences;
+  audio: AudioPreferences;
 }
 export interface AccountState extends Account {
   status: Status;
@@ -36,6 +40,9 @@ export interface AccountState extends Account {
   muted: boolean;
   themeSupport: ThemeSupport;
   themeAccent?: string;
+  callId?: string;
+  callActions?: CallAction[];
+  audio?: AudioState;
 }
 export interface Snapshot {
   nativeShell?: boolean;
@@ -46,14 +53,25 @@ export interface Snapshot {
   preferences: Preferences;
   notificationError: boolean;
   version: string;
+  audio?: AudioPreferences;
+  activity?: ActivityItem[];
+  testCall?: { id: string; workspaceId: string; phase: CallPhase; muted: boolean };
   appearance?: AppearanceOptions;
   themeCatalog?: { id: string; name: string; colors: AppearanceOptions['resolved']['colors'] }[];
 }
+export interface ActivityItem { id: string; workspaceId: string; title: string; body: string; at: number }
 export type ShellCommand =
   | { type: 'add'; name: string; color: Color }
   | { type: 'select' | 'reload' | 'remove' | 'test-notification' | 'move-up' | 'move-down'; id: string }
   | { type: 'rename'; id: string; name: string; color: Color }
   | { type: 'preferences'; preferences: Preferences }
+  | { type: 'preference'; key: keyof Preferences; value: boolean | 'separate' | 'combined' }
+  | { type: 'audio-preferences'; audio: AudioPreferences }
+  | { type: 'call-action'; id: string; callId: string; action: CallAction }
+  | { type: 'open-activity'; id: string }
+  | { type: 'test-call'; id: string }
+  | { type: 'test-call-action'; callId: string; action: CallAction }
+  | { type: 'audio-refresh' | 'audio-test' | 'audio-stop' | 'activity' | 'show' | 'quit' }
   | { type: 'overlay'; open: boolean }
   | { type: 'workspace-theme'; id: string }
   | { type: 'preview-theme' | 'save-theme'; id: string; theme: WorkspaceTheme }
@@ -62,11 +80,13 @@ export type ShellCommand =
   | { type: 'open-help' | 'new-workspace' | 'settings' | 'health' | 'workspace-limit' | 'toggle-sidebar' | 'toggle-appearance' | 'zoom-in' | 'zoom-out' | 'reset-zoom' };
 export type AccountEvent =
   | { type: 'heartbeat' }
+  | { type: 'audio-state'; audio: AudioState }
   | { type: 'notification'; id: string; title: string; body: string; tag: string; silent: boolean }
   | { type: 'notification-close'; id: string }
-  | { type: 'state'; status: 'ready' | 'sign-in' | 'offline'; unread: number; unreadKnown: boolean; inCall: boolean; callPhase: CallPhase; muted: boolean; themeSupport: ThemeSupport }
+  | { type: 'state'; status: 'ready' | 'sign-in' | 'offline'; unread: number; unreadKnown: boolean; inCall: boolean; callPhase: CallPhase; muted: boolean; themeSupport: ThemeSupport; callId?: string; callActions?: CallAction[] }
   | { type: 'ring'; id: string }
   | { type: 'ring-end'; id: string }
+  | { type: 'call-action-result'; requestId: string; clicked: boolean }
   | { type: 'answer-result'; id: string; clicked: boolean };
 
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -75,11 +95,11 @@ export const DEFAULT_PREFERENCES: Preferences = {
   experimentalAnswer: false,
   launchAtLogin: false,
   showMenuBar: true,
-  menuBarCount: true,
-  menuBarLayout: 'separate',
+  menuBarCount: false,
+  menuBarLayout: 'combined',
   animateActivity: true
 };
-export const emptyConfig = (): Config => ({ version: 1, sidebarCollapsed: false, macAppearance: true, accounts: [], activeId: null, preferences: { ...DEFAULT_PREFERENCES } });
+export const emptyConfig = (): Config => ({ version: 1, sidebarCollapsed: false, macAppearance: true, accounts: [], activeId: null, preferences: { ...DEFAULT_PREFERENCES }, audio: { ...DEFAULT_AUDIO } });
 
 export const ZOOM_FACTORS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3] as const;
 export function validZoom(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value) && value >= 0.5 && value <= 3; }
@@ -104,11 +124,12 @@ export function parseConfig(value: unknown): Config {
   const v = value as Config;
   const preferences = { ...v.preferences,
     showMenuBar: v.preferences?.showMenuBar === undefined ? true : v.preferences.showMenuBar,
-    menuBarCount: v.preferences?.menuBarCount === undefined ? true : v.preferences.menuBarCount,
-    menuBarLayout: v.preferences?.menuBarLayout === undefined ? 'separate' : v.preferences.menuBarLayout,
+    menuBarCount: v.preferences?.menuBarCount === undefined ? false : v.preferences.menuBarCount,
+    menuBarLayout: v.preferences?.menuBarLayout === undefined ? 'combined' : v.preferences.menuBarLayout,
     animateActivity: v.preferences?.animateActivity === undefined ? true : v.preferences.animateActivity
   };
   if (v.version !== 1 || !Array.isArray(v.accounts) || v.accounts.length > 12 || !validPreferences(preferences)
+    || (v.audio !== undefined && !validAudio(v.audio))
     || (v.macAppearance !== undefined && typeof v.macAppearance !== 'boolean')) throw new Error('Unsupported settings file');
   const seen = new Set<string>();
   for (const a of v.accounts) {
@@ -117,6 +138,7 @@ export function parseConfig(value: unknown): Config {
   }
   return {
     version: 1,
+    audio: { input: v.audio?.input ?? null },
     sidebarCollapsed: v.sidebarCollapsed === true,
     macAppearance: v.macAppearance !== false,
     accounts: v.accounts.map(a => ({ id: a.id, name: a.name.trim(), color: a.color, ...(a.zoom !== undefined ? { zoom: a.zoom } : {}), ...(a.theme ? { theme: cleanTheme(a.theme) } : {}) })),

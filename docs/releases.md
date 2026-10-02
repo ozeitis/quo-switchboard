@@ -25,7 +25,7 @@ The DMGs, ZIPs, and `SHA256SUMS` are placed in `release/`. On macOS, verify a do
 
 ## CI
 
-Pull requests run type, unit, and desktop tests on macOS. Version tags run the same tests, build both architectures, generate an inventory and checksums, and create a **draft prerelease**. Review the artifacts and field-test status before making a release public. Workflow actions are pinned to reviewed commit SHAs. Normal builds do not need release credentials.
+Pull requests run type, unit, and desktop tests on GitHub’s `xcode-27` macOS image. The AppKit status-item lifecycle requires the macOS 27 SDK at build time; the universal module still targets macOS 13 and gates newer controls at runtime. [GitHub documents this runner image](https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md). Version tags run the same tests, build both architectures, generate an inventory and checksums, and create a **draft prerelease**. Review the artifacts and field-test status before making a release public. Workflow actions are pinned to reviewed commit SHAs. Normal builds do not need release credentials.
 
 GitHub build provenance is generated for the CI-produced DMGs and ZIPs. A binary built locally is not covered by that CI attestation. Build outputs are not claimed to be byte-for-byte reproducible; signing and archive metadata can vary.
 

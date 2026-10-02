@@ -1,39 +1,39 @@
-# Menu bar
+# Activity in the menu bar
 
-Each workspace gets a separate colored initial icon and optional unread count by default. Clicking it opens a native menu for that workspace: unread activity, current call state, switching, theme, and a test alert. Its actions keep the workspace identity even if another account is selected.
+One compact SF Symbol is the default. An unread dot indicates activity without consuming space with large totals. Click it, or use **⌘⇧A**, to open a native AppKit popover. Settings → General offers separate workspace icons, optional unread counts, visibility, and animation. Existing explicit preferences survive an update.
 
-**Settings → Menu bar** switches between **One icon per workspace** and **One combined icon**. Combined mode uses less menu-bar space and lists every workspace in one menu, prioritizing incoming calls. Visibility and count controls apply to either layout. macOS controls final status-item placement and may hide items when space is limited.
+The panel contains each workspace's name, color, full observed unread count, and current call state. Clicking its name selects that workspace. Incoming calls come first. Recognized calls expose Answer, Decline, Mute/Unmute, Hold/Resume, or End as appropriate. Switchboard validates the originating workspace and current control again before acting. Answer is disabled while another recognized call is active; it never automatically holds or ends that call.
 
-Incoming calls use a red phone symbol with a restrained pulse. Active calls are green; hold uses an amber pause; dialing/connecting/transfer use blue symbols; reconnecting/ending use amber. Text labels and distinct glyphs keep meaning independent of color. The native rail uses the same states, including while collapsed. Animation respects both **Animate call activity** and system **Reduce Motion**.
+Recent activity shows the latest four forwarded Quo page alerts. Clicking one selects its source workspace and invokes Quo's original notification-click handler. The bounded twenty-item history lives only in memory; it is not an inbox archive. Private previews redact it. Debug alerts are excluded. No business metrics are estimated from unread badges.
 
-## Observable call states
+The footer opens Switchboard or Settings. Notification tests, a local call simulator, and connection health live under **Settings → Diagnostics**. The simulator is clearly labeled, expires after one minute, and does not place or answer a phone call. **Settings → Audio** manages the shared microphone.
+
+## Counts and call states
+
+- Numeric accessibility labels in Quo's inbox and direct-message navigation supply counts. Navigation takes precedence over the window title; sources are never added together.
+- A hovered inbox can temporarily replace its badge with More. Its last observed count remains until the badge returns.
+- Missing markers mean unavailable, not zero. Partial totals carry `+`; optional status-item totals cap at `99+`. The popover shows full observed totals.
+- These are sidebar counters, not delivered-alert totals. Muted or overflow items can be absent, and badges can count different kinds of activity. They are labeled **unread**.
+- Counts are not persisted. Offline values can be stale. Existing unread items never generate new desktop alerts.
 
 | State | Evidence from the current call panel |
 | --- | --- |
 | Incoming | One unique enabled Answer/Accept call control |
 | Active | Visible End call/Hang up control, including while disabled |
-| Held | Resume/Unhold control or Hold marked pressed |
-| Muted | Unmute control or Mute marked pressed |
-| Dialing, connecting, reconnecting, transferring, ending | Explicit accessible status inside the current call panel |
-| Call waiting | An incoming control alongside an ongoing call |
-| Idle | Call controls disappear |
+| Held | Resume/Unhold or Hold marked pressed |
+| Muted | Unmute or Mute marked pressed |
+| Dialing, connecting, reconnecting, transferring, ending | Explicit accessible status in the current call panel |
+| Call waiting | Incoming control alongside an ongoing call |
+| Idle | Current call controls disappear |
 
-Hold and Mute actions alone do not imply those states. Historical conversation text is excluded. A panel without a recognized accessibility boundary stays generically busy rather than guessing hold or transport state. This is English-language UI observation, not a provider event stream. Ended, rejected, missed, and answered-on-another-device outcomes cannot be distinguished reliably from disappearance; the app does not invent them. Real Quo calls still require field testing.
+Hold and Mute buttons alone do not imply those states. Historical text is excluded. An unrecognized panel stays generically busy. Ended, rejected, missed, and answered elsewhere cannot be reliably distinguished from disappearance. The adapter observes English accessible UI; it is not a provider event stream. Real Quo calls still require field testing.
 
-“Desktop alerts: On” describes Switchboard's preference. macOS still controls permission, Focus, and suppression during screen sharing. A test alert can reach macOS without a visible banner. Check [macOS Notifications settings](https://support.apple.com/guide/mac-help/notifications-settings-mh40583/mac), including “when mirroring or sharing the display.” That control affects other applications too; Switchboard does not change it.
+Ringing uses a restrained pulse, active calls green, hold amber, and connection states distinct symbols and semantic colors. Labels and glyphs preserve meaning without color. The native sidebar uses the same presentation. Animation respects both the app preference and macOS Reduce Motion.
 
-## What the count means
+macOS controls banner permission, Focus, and screen-sharing suppression. A local alert can reach Notification Center without a visible banner. Check [Apple's notification settings](https://support.apple.com/guide/mac-help/notifications-settings-mh40583/mac). Switchboard does not change global system preferences.
 
-- The adapter reads numeric accessibility labels in Quo's inbox and direct-message navigation. It does not read phone numbers, conversation previews, or message bodies for counting.
-- Navigation takes precedence over a `(number)` window title. These sources are never added together.
-- Quo replaces a hovered inbox's badge with its More button. The adapter retains that row's last observed count until the badge returns.
-- Missing markers produce an unavailable state, not a claim that the account has zero unread activity. A partial aggregate has a `+` suffix. `99+` keeps large totals compact beside the menu-bar icon; the menu shows full observed totals.
-- These are observed sidebar counters, not a history of delivered desktop alerts. Muted inboxes and direct messages hidden behind overflow may be absent. Inbox badges count conversations; direct-message badges can count messages. The menu therefore labels the sum **unread**, not messages or missed calls.
-- Counts are not persisted. A new page must supply them again. Offline counts can be stale; the menu labels that state.
-- Existing unread items do not generate new desktop alerts. Quo's new-notification and incoming-call events still drive alerts.
+## Design and integration
 
-Daily missed calls, response times, and unanswered conversations need verified API data, time windows, permissions, and account mapping. They should be a separate optional integration. The current menu does not estimate business metrics from badges.
+The panel follows [Apple's popover guidance](https://developer.apple.com/design/human-interface-guidelines/popovers): a small contextual surface, clear actions, and standard dismissal. macOS 27 uses the public status-item expanded-interface lifecycle described in [Modernize your AppKit app](https://developer.apple.com/videos/play/wwdc2026/289/). Earlier systems use the standard status-button action. Compact access across accounts is also the useful pattern in [1Password Quick Access](https://support.1password.com/quick-access/).
 
-## Design basis
-
-[Apple's menu-bar guidance](https://developer.apple.com/kr/design/human-interface-guidelines/the-menu-bar) recommends template symbols, user control over visibility, and native menus for simple actions. [Slack's notification controls](https://slack.com/help/articles/201355156-Configure-your-Slack-notifications) distinguish badge activity from banner delivery and provide workspace-aware controls. [Electron's Tray API](https://www.electronjs.org/docs/latest/api/tray) supplies the native status item, stable identity, template image, and menu. [Quo's API](https://www.quo.com/docs/2026-03-30/introduction) is the potential source for a later business-metrics integration.
+Daily missed calls, response times, and unanswered conversations need verified API records, time windows, permissions, and organization mapping. They belong in a separate optional integration. [Quo's current call API](https://www.quo.com/docs/2026-03-30/calls/list-calls) provides call records; it does not expose the live Answer control used here.

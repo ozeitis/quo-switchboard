@@ -2,12 +2,12 @@ import { test, expect, _electron, type ElectronApplication, type Page } from '@p
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { Menu as NativeMenu, Notification as NativeNotification, Tray as NativeTray, NativeImage } from 'electron';
+import type { Menu as NativeMenu, Notification as NativeNotification } from 'electron';
 import { QUO_LIGHT, QUO_DARK } from '../../src/preload/theme-contract';
 import { channels } from '../../src/shared/theme';
 
 interface NativeRecord { notification: NativeNotification; title: string; body: string; subtitle: string; actions: string[] }
-type MainGlobal = typeof globalThis & { notificationRecords: NativeRecord[]; externalOrigins: string[]; textMenus: { menu: NativeMenu; frameURL?: string }[]; trayMenus: { menu: NativeMenu; tray: NativeTray }[]; trayImages: WeakMap<NativeTray, NativeImage>; fixtureReduceMotion?: boolean };
+type MainGlobal = typeof globalThis & { notificationRecords: NativeRecord[]; externalOrigins: string[]; textMenus: { menu: NativeMenu; frameURL?: string }[]; nativeStatus: { items: { id: string; name: string; title: string }[]; accounts: import('../../src/shared/model').AccountState[]; activity: import('../../src/shared/model').ActivityItem[]; testCall?: import('../../src/shared/model').Snapshot['testCall'] }; nativeStatusAction: (json: string) => void; nativeStatusInspect: () => { id: string; title: string; image: string }[]; fixtureReduceMotion?: boolean };
 
 const fixture = `<!doctype html><html><head><title>Quo fixture</title></head><body>
 <h1>Quo test workspace</h1><button id="notify">Send notification</button><button id="ring">Simulate incoming call</button>
@@ -49,7 +49,7 @@ let dataDirectory: string;
 async function launch(directory: string, restoring = false, native = false, html = fixture): Promise<void> {
   const fixturePath = join(directory, 'fixture.html');
   await writeFile(fixturePath, html, { mode: 0o600 });
-  application = await _electron.launch({ args: [resolve('tests/desktop/bootstrap.cjs')], env: { ...process.env, SWITCHBOARD_TEST_DATA: directory, SWITCHBOARD_TEST_FIXTURE: fixturePath, SWITCHBOARD_TEST_SHELL: native ? 'native' : 'html' } });
+  application = await _electron.launch({ args: [resolve('tests/desktop/bootstrap.cjs'), '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'], env: { ...process.env, SWITCHBOARD_TEST_DATA: directory, SWITCHBOARD_TEST_FIXTURE: fixturePath, SWITCHBOARD_TEST_SHELL: native ? 'native' : 'html' } });
   window = await application.firstWindow();
   if (!restoring) await expect(window.getByRole('button', { name: 'Add your first workspace' })).toBeVisible();
   // DOM visibility does not establish that Electron finished showing the window.
@@ -72,7 +72,10 @@ test.beforeEach(async () => {
 });
 test.afterEach(async () => {
   if (application) {
-    await application.evaluate(({ app }) => app.exit(0)).catch(() => undefined);
+    // Fixtures may end with an active call. Confirm only the teardown quit guard.
+    await application.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false });
+    }).catch(() => undefined);
     await application.close().catch(() => undefined);
   }
   await rm(dataDirectory, { recursive: true, force: true });
@@ -507,65 +510,39 @@ test('Quo sidebar badges drive account counts without title double-counting, hov
   await expect.poll(async () => (await snapshot()).accounts[0]).toMatchObject({ unread: 0, unreadKnown: false });
 });
 
-test('the native menu bar reports each account, routes calls with the window closed, and preserves display preferences', async () => {
-  await application.close();
-  await launch(dataDirectory, false, true, unreadFixture);
-  await shellCommand({ type: 'preferences', preferences: { ...(await window.evaluate(() => (window as unknown as { switchboard: { snapshot(): Promise<import('../../src/shared/model').Snapshot> } }).switchboard.snapshot())).preferences, menuBarLayout: 'combined' } });
-  const studio = await addNative('Studio');
-  const workshop = await addNative('Workshop');
-  const config = JSON.parse(await readFile(join(dataDirectory, 'workspaces.json'), 'utf8'));
-  await shellCommand({ type: 'select', id: config.accounts[0].id });
-  const menu = () => application.evaluate(() => {
-    const record = (globalThis as MainGlobal).trayMenus.at(-1)!;
-    return { title: record.tray.getTitle(), image: (globalThis as MainGlobal).trayImages.get(record.tray)!.toDataURL(),
-      items: record.menu.items.map(item => ({ id: item.id, label: item.label, sublabel: item.sublabel, type: item.type, checked: item.checked, enabled: item.enabled, iconSize: typeof item.icon === 'object' ? item.icon?.getSize() : undefined })) };
-  });
-  const click = (id: string) => application.evaluate(({ BrowserWindow }, id) => {
-    const item = (globalThis as MainGlobal).trayMenus.at(-1)!.menu.getMenuItemById(id)!;
-    item.click(item, BrowserWindow.getAllWindows()[0], { shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, triggeredByAccelerator: false });
-  }, id);
-  await expect.poll(async () => (await menu()).title).toBe('44');
-  const initial = await menu();
-  expect(initial.items.find(item => item.id === 'summary')?.label).toBe('44 unread');
-  expect(initial.items.find(item => item.id === `workspace:${config.accounts[0].id}`)).toMatchObject({ label: 'Studio — 22 unread', sublabel: '', type: 'radio', checked: true, iconSize: { width: 18, height: 18 } });
+test('native activity reports real counts, routes source alerts with the window closed, and preserves preferences', async () => {
+  await application.close(); await launch(dataDirectory, false, true, unreadFixture);
+  const studio = await addNative('Studio'); const workshop = await addNative('Workshop');
+  await shellCommand({type:'preference',key:'menuBarCount',value:true});
+  const ids = (await stateSnapshot()).accounts.map(account => account.id);
+  const model = () => application.evaluate(() => (globalThis as MainGlobal).nativeStatus);
+  const icons = () => application.evaluate(() => (globalThis as MainGlobal).nativeStatusInspect());
+  const click = (value: unknown) => application.evaluate((_electron, value) => (globalThis as MainGlobal).nativeStatusAction(JSON.stringify(value)), value);
+  await expect.poll(async () => (await model()).items.map(item => item.title)).toEqual(['44']);
   await studio.evaluate(() => document.querySelector('[aria-label="11 unread conversations"]')!.setAttribute('aria-label', '190 unread conversations'));
-  await expect.poll(async () => (await menu()).title).toBe('99+');
-  expect((await menu()).items.find(item => item.id === 'summary')?.label).toBe('223 unread');
-  expect((await menu()).items.find(item => item.id === `workspace:${config.accounts[0].id}`)?.label).toBe('Studio — 201 unread');
-  await studio.evaluate(() => document.querySelector('[aria-label="190 unread conversations"]')!.setAttribute('aria-label', '11 unread conversations'));
-  await expect.poll(async () => (await menu()).title).toBe('44');
+  await expect.poll(async () => (await model()).items[0]!.title).toBe('99+');
+  expect((await model()).accounts[0]!.unread).toBe(201);
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
-  await workshop.evaluate(() => document.getElementById('ring')!.click());
-  await expect.poll(async () => (await menu()).items.find(item => item.id?.startsWith('workspace:'))?.label).toBe('Workshop — Incoming call');
-  expect((await menu()).image).not.toBe(initial.image);
-  await click(`workspace:${config.accounts[1].id}`);
-  await expect(window.locator('#workspace-title')).toHaveText('Workshop');
+  await shellCommand({type:'select',id:ids[0]});
+  await workshop.getByRole('button', { name: 'Send notification' }).evaluate(element => (element as HTMLElement).click());
+  await expect.poll(async () => (await model()).activity.length).toBe(1);
+  const activity = (await model()).activity[0]!;
+  expect(activity).toMatchObject({ workspaceId: ids[1], title: 'New message', body: 'Fixture message' });
+  await click({ type: 'open-activity', id: activity.id });
+  await expect.poll(async () => (await stateSnapshot()).activeId).toBe(ids[1]);
+  await expect.poll(() => workshop.evaluate(() => document.body.dataset.notificationClicked)).toBe('yes');
   expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(true);
-  expect(await workshop.evaluate(() => document.body.dataset.answered)).toBeUndefined();
-  await workshop.getByRole('button', { name: 'Answer call' }).click();
-  await workshop.getByRole('button', { name: 'End call' }).click();
-  await click('test-notification');
-  await expect.poll(async () => (await notifications()).at(-1)?.subtitle).toBe('Test notification');
-  await workshop.evaluate(() => document.querySelector('nav[aria-label="Inboxes"]')!.remove());
-  await expect.poll(async () => (await menu()).title).toBe('22+');
-  expect((await menu()).items.find(item => item.id === `workspace:${config.accounts[1].id}`)?.sublabel).toContain('Unread unavailable');
-  await workshop.reload();
-  await expect.poll(async () => (await menu()).title).toBe('44');
-  const preferences = config.preferences;
-  await shellCommand({ type: 'preferences', preferences: { ...preferences, menuBarCount: false } });
-  expect((await menu()).title).toBe('');
-  expect((await menu()).items.find(item => item.id === 'summary')?.label).toBe('44 unread');
+  const preferences = (await stateSnapshot()).preferences;
+  await shellCommand({ type: 'preferences', preferences: { ...preferences, privateNotifications: true, menuBarCount: false } });
+  expect((await model()).activity[0]).toMatchObject({ title: 'Quo activity', body: 'Open the workspace to view it.' });
+  await expect.poll(async () => (await icons())[0]!.title).toBe('');
   await shellCommand({ type: 'preferences', preferences: { ...preferences, menuBarCount: false, showMenuBar: false } });
-  expect(await application.evaluate(() => (globalThis as MainGlobal).trayMenus.at(-1)!.tray.isDestroyed())).toBe(true);
+  expect(await icons()).toEqual([]);
   await shellCommand({ type: 'preferences', preferences: { ...preferences, menuBarCount: false, notifications: false } });
-  expect((await menu()).items.find(item => item.id === 'test-notification')?.enabled).toBe(false);
-  await application.close();
-  await launch(dataDirectory, true, true, unreadFixture);
-  await expect.poll(async () => (await menu()).items.find(item => item.id === 'summary')?.label).toBe('44 unread');
-  expect((await menu()).title).toBe('');
-  const restored = JSON.parse(await readFile(join(dataDirectory, 'workspaces.json'), 'utf8'));
-  expect(restored.preferences).toMatchObject({ showMenuBar: true, menuBarCount: false, notifications: false });
-  expect(restored.accounts.map((account: { id: string }) => account.id)).toEqual(config.accounts.map((account: { id: string }) => account.id));
+  await application.close(); await launch(dataDirectory, true, true, unreadFixture);
+  await expect.poll(async () => (await icons()).length).toBe(1); expect((await icons())[0]!.title).toBe('');
+  const restored = await stateSnapshot(); expect(restored.preferences).toMatchObject({ showMenuBar: true, menuBarCount: false, notifications: false });
+  expect(restored.accounts.map(account => account.id)).toEqual(ids);
 });
 
 const stateSnapshot = () => window.evaluate(() => (window as unknown as { switchboard: { snapshot(): Promise<import('../../src/shared/model').Snapshot> } }).switchboard.snapshot());
@@ -698,19 +675,16 @@ test('separate menu-bar items keep individual counts and source actions, animate
   await application.close(); await launch(dataDirectory, false, true, themeFixture);
   const studio=await addNative('Studio'); const workshop=await addNative('Workshop');
   const ids=(await stateSnapshot()).accounts.map(account=>account.id);
-  const trays=()=>application.evaluate(()=>{
-    const latest=new Map<NativeTray,NativeMenu>(); for(const record of (globalThis as MainGlobal).trayMenus) if(!record.tray.isDestroyed()) latest.set(record.tray,record.menu);
-    return [...latest].map(([tray,menu])=>({name:menu.items[0]!.sublabel,title:tray.getTitle(),image:(globalThis as MainGlobal).trayImages.get(tray)!.toDataURL(),items:menu.items.map(item=>({id:item.id,label:item.label}))}));
+  const preferencesAtStart = (await stateSnapshot()).preferences;
+  await shellCommand({ type: 'preferences', preferences: { ...preferencesAtStart, menuBarLayout: 'separate', menuBarCount:true } });
+  const trays = () => application.evaluate(() => {
+    const model = (globalThis as MainGlobal).nativeStatus;
+    return (globalThis as MainGlobal).nativeStatusInspect().map(item => ({ ...item, name: model.items.find(source => source.id === item.id)!.name, state: model.accounts.find(account => account.id === item.id) }));
   });
-  await expect.poll(async()=> (await trays()).map(item=>[item.name,item.title])).toEqual([['Studio','22'],['Workshop','22']]);
-  await shellCommand({type:'select',id:ids[0]});
-  await application.evaluate(({BrowserWindow})=>{
-    const record=(globalThis as MainGlobal).trayMenus.findLast(record=>!record.tray.isDestroyed()&&record.menu.items[0]!.sublabel==='Workshop')!;
-    const item=record.menu.getMenuItemById('test-notification')!; item.click(item,BrowserWindow.getAllWindows()[0],{shiftKey:false,ctrlKey:false,altKey:false,metaKey:false,triggeredByAccelerator:false});
-  });
-  await expect.poll(async()=> (await notifications()).at(-1)?.title).toBe('Workshop');
+  await expect.poll(async () => (await trays()).map(item => [item.name, item.title])).toEqual([['Studio', 'S 22'], ['Workshop', 'W 22']]);
+  await shellCommand({ type: 'select', id: ids[0] });
   await workshop.evaluate(()=>document.getElementById('ring')!.click());
-  await expect.poll(async()=> (await trays()).find(item=>item.name==='Workshop')!.items.some(item=>item.label.includes('Incoming call'))).toBe(true);
+  await expect.poll(async()=> (await trays()).find(item=>item.name==='Workshop')!.state?.ringing).toBe(true);
   const frames=new Set<string>(); const still=new Set<string>();
   for(let i=0;i<6;i++){const items=await trays();frames.add(items.find(item=>item.name==='Workshop')!.image);still.add(items.find(item=>item.name==='Studio')!.image);await window.waitForTimeout(240);}
   expect(frames.size).toBe(2);expect(still.size).toBe(1);
@@ -721,7 +695,7 @@ test('separate menu-bar items keep individual counts and source actions, animate
   await shellCommand({type:'preferences',preferences:{...preferences,menuBarLayout:'combined'}});
   await expect.poll(async()=> (await trays()).map(item=>item.title)).toEqual(['44']);
   await shellCommand({type:'preferences',preferences:{...preferences,menuBarCount:false}});
-  await expect.poll(async()=> (await trays()).map(item=>[item.name,item.title])).toEqual([['Studio',''],['Workshop','']]);
+  await expect.poll(async()=> (await trays()).map(item=>[item.name,item.title])).toEqual([['Studio','S'],['Workshop','W']]);
   await shellCommand({type:'preferences',preferences:{...preferences,showMenuBar:false}});expect(await trays()).toEqual([]);
   expect(await studio.evaluate(()=>document.getElementById('sideMenu')!==null)).toBe(true);
 });
@@ -735,8 +709,96 @@ test('system Reduce Motion stops menu-bar animation and removes page motion with
   await application.evaluate(({nativeTheme})=>{(globalThis as MainGlobal).fixtureReduceMotion=true;nativeTheme.emit('updated');});
   await expect.poll(async()=> (await stateSnapshot()).appearance!.reduceMotion).toBe(true);
   await expect.poll(()=>page.locator('.surface').evaluate(element=>getComputedStyle(element).animationDuration)).toBe('1e-05s');
-  const icon=()=>application.evaluate(()=>{const record=(globalThis as MainGlobal).trayMenus.findLast(record=>!record.tray.isDestroyed())!;return (globalThis as MainGlobal).trayImages.get(record.tray)!.toDataURL();});
+  const icon=()=>application.evaluate(()=>(globalThis as MainGlobal).nativeStatusInspect()[0]!.image);
   const before=await icon();await window.waitForTimeout(750);expect(await icon()).toBe(before);
   expect((await stateSnapshot()).preferences.animateActivity).toBe(true);
   await page.getByRole('button',{name:'Answer call'}).click();await page.getByRole('button',{name:'End call'}).click();
+});
+
+test('native call commands revalidate the source call and support mute, hold, resume, and end', async () => {
+  await application.close(); await launch(dataDirectory, false, true, themeFixture);
+  const studio = await addNative('Studio'); const workshop = await addNative('Workshop');
+  const ids = (await stateSnapshot()).accounts.map(account => account.id);
+  await studio.evaluate(() => {
+    document.querySelector('#call')!.innerHTML = '<div role="dialog" aria-label="Active call"><button aria-label="End call">End</button><button aria-label="Mute">Mute</button><button aria-label="Hold">Hold</button></div>';
+    const panel = document.querySelector('#call')!;
+    panel.querySelector('[aria-label="End call"]')!.addEventListener('click', () => panel.replaceChildren());
+    for (const [action, reverse] of [['Mute', 'Unmute'], ['Hold', 'Resume']]) panel.querySelector(`[aria-label="${action}"]`)!.addEventListener('click', event => {
+      const button = event.currentTarget as HTMLElement; button.setAttribute('aria-label', button.getAttribute('aria-label') === action ? reverse! : action!);
+    });
+  });
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]!.callActions).toEqual(['end', 'mute', 'hold']);
+  let callId = (await stateSnapshot()).accounts[0]!.callId!;
+  await shellCommand({ type: 'call-action', id: ids[0], callId, action: 'mute' });
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]!.muted).toBe(true);
+  await shellCommand({ type: 'call-action', id: ids[0], callId, action: 'hold' });
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]!.callPhase).toBe('held');
+  await shellCommand({ type: 'call-action', id: ids[0], callId, action: 'resume' });
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]!.callPhase).toBe('active');
+  await workshop.evaluate(() => document.getElementById('ring')!.click());
+  await expect.poll(async () => (await stateSnapshot()).accounts[1]!.ringing).toBe(true);
+  await application.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false }); });
+  await shellCommand({ type: 'call-action', id: ids[1], callId: (await stateSnapshot()).accounts[1]!.callId, action: 'answer' });
+  expect(await workshop.evaluate(() => document.body.dataset.answered)).toBeUndefined();
+  await shellCommand({ type: 'call-action', id: ids[0], callId, action: 'end' });
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]!.inCall).toBe(false);
+  callId = (await stateSnapshot()).accounts[1]!.callId!;
+  await shellCommand({ type: 'call-action', id: ids[1], callId, action: 'answer' });
+  await expect.poll(() => workshop.evaluate(() => document.body.dataset.answered)).toBe('yes');
+  expect((await stateSnapshot()).activeId).toBe(ids[1]);
+  const activeId = (await stateSnapshot()).accounts[1]!.callId!;
+  await shellCommand({ type: 'call-action', id: ids[1], callId, action: 'end' });
+  expect((await stateSnapshot()).accounts[1]!.inCall).toBe(true);
+  await shellCommand({ type: 'call-action', id: ids[1], callId: activeId, action: 'end' });
+  await expect.poll(async () => (await stateSnapshot()).accounts[1]!.inCall).toBe(false);
+});
+
+test('global microphone choice resolves per profile, survives restart, and leaves existing streams alone', async () => {
+  const studio = await add('Studio'); const workshop = await add('Workshop');
+  const inventory = (page: Page) => page.evaluate(async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const devices = await navigator.mediaDevices.enumerateDevices(); stream.getTracks().forEach(track => track.stop());
+    return devices.filter(device => device.kind === 'audioinput' && !['default','communications'].includes(device.deviceId)).map(device => ({ label: device.label, id: device.deviceId }));
+  });
+  const first = await inventory(studio), second = await inventory(workshop);
+  expect(first[1]!.label).toBe(second[1]!.label); expect(first[1]!.id).not.toBe(second[1]!.id);
+  await shellCommand({ type: 'audio-preferences', audio: { input: first[1]!.label } });
+  await expect.poll(async () => (await stateSnapshot()).accounts.map(account => account.audio?.status)).toEqual(['selected','selected']);
+  for (const [page, id] of [[studio, first[1]!.id], [workshop, second[1]!.id]] as const) {
+    expect(await page.evaluate(async () => { const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: 'invalid-old-Quo-setting' } } }); const actual = stream.getAudioTracks()[0]!.getSettings().deviceId; stream.getTracks().forEach(track => track.stop()); return actual; })).toBe(id);
+  }
+  await shellCommand({ type:'audio-test' });
+  await expect.poll(async () => (await stateSnapshot()).accounts[1]!.audio?.testing).toBe(true);
+  await shellCommand({type:'select',id:(await stateSnapshot()).accounts[0]!.id});
+  await expect.poll(async () => (await stateSnapshot()).accounts[1]!.audio?.testing).toBe(false);
+  await studio.evaluate(async () => { (window as unknown as { fixtureStream: MediaStream }).fixtureStream = await navigator.mediaDevices.getUserMedia({ audio: true }); });
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]!.audio?.capturing).toBe(true);
+  await expect(shellCommand({type:'audio-test'})).rejects.toThrow('Finish the call before testing audio.');
+  await shellCommand({ type: 'audio-preferences', audio: { input: 'Unavailable microphone' } });
+  expect(await studio.evaluate(() => (window as unknown as { fixtureStream: MediaStream }).fixtureStream.getAudioTracks()[0]!.readyState)).toBe('live');
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]!.audio?.status).toBe('missing');
+  expect(await workshop.evaluate(async () => { try { await navigator.mediaDevices.getUserMedia({ audio: true }); return 'unexpected'; } catch (error) { return (error as DOMException).name; } })).toBe('NotFoundError');
+  await studio.evaluate(() => (window as unknown as { fixtureStream: MediaStream }).fixtureStream.getTracks().forEach(track => track.stop()));
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]!.audio?.capturing).toBe(false);
+  await shellCommand({ type: 'audio-preferences', audio: { input: first[1]!.label } });
+  await application.close(); await launch(dataDirectory, true);
+  expect((await stateSnapshot()).audio).toEqual({ input: first[1]!.label });
+  const config = JSON.parse(await readFile(join(dataDirectory, 'workspaces.json'), 'utf8'));
+  expect(config.audio).toEqual({ input: first[1]!.label }); expect(JSON.stringify(config.audio)).not.toContain(first[1]!.id);
+});
+
+test('diagnostic calls are labeled simulations, exercise controls, and never modify Quo calls or counts', async () => {
+  await application.close(); await launch(dataDirectory, false, true, unreadFixture);
+  const page = await addNative('Studio'); const id = (await stateSnapshot()).activeId!;
+  await shellCommand({ type: 'test-call', id }); const callId = (await stateSnapshot()).testCall!.id;
+  expect((await stateSnapshot()).accounts[0]).toMatchObject({ inCall: false, ringing: false, unread: 22 });
+  expect((await notifications()).at(-1)?.subtitle).toBe('Test call · local simulation');
+  await application.evaluate(() => (globalThis as MainGlobal).notificationRecords.at(-1)!.notification.emit('action', {}, 0));
+  await expect.poll(async () => (await stateSnapshot()).testCall!.phase).toBe('active');
+  expect((await stateSnapshot()).testCall!.phase).toBe('active');
+  await shellCommand({ type: 'test-call-action', callId, action: 'mute' }); expect((await stateSnapshot()).testCall!.muted).toBe(true);
+  await shellCommand({ type: 'test-call-action', callId, action: 'hold' }); expect((await stateSnapshot()).testCall!.phase).toBe('held');
+  await shellCommand({ type: 'test-call-action', callId, action: 'resume' }); expect((await stateSnapshot()).testCall!.phase).toBe('active');
+  await shellCommand({ type: 'test-call-action', callId, action: 'end' }); expect((await stateSnapshot()).testCall).toBeUndefined();
+  expect(await page.evaluate(() => document.body.dataset.answered)).toBeUndefined();
 });

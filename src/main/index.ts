@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Accounts } from './accounts';
+import { Calls } from './calls';
+import { validAudio, validAudioState } from '../shared/audio';
 import { Notifications } from './notifications';
 import { appOrigin, cleanText, RateLimit } from './policy';
 import { Store } from './store';
@@ -10,7 +12,7 @@ import { NativeShell } from './native-shell';
 import { Health } from './health';
 import { WindowState } from './window-state';
 import { MenuBar } from './menu-bar';
-import { CALL_PHASES, validColor, validId, validName, validPreferences, ZOOM_FACTORS, type AccountState, type CallPhase, type ThemeSupport, type ShellCommand, type Snapshot } from '../shared/model';
+import { CALL_ACTIONS, CALL_PHASES, validColor, validId, validName, validPreferences, ZOOM_FACTORS, type AccountState, type CallPhase, type CallAction, type ThemeSupport, type ShellCommand, type Snapshot } from '../shared/model';
 import { cleanTheme, DEFAULT_THEME, resolveTheme, THEME_PRESETS, validTheme, type AppearanceOptions, type WorkspaceTheme } from '../shared/theme';
 import { SHELL_LAYOUT } from '../shared/layout';
 
@@ -24,6 +26,9 @@ let window: BrowserWindow;
 let store: Store;
 let accounts: Accounts;
 let notifications: Notifications;
+let calls: Calls;
+let testCall: Snapshot['testCall'];
+let testCallTimer: ReturnType<typeof setTimeout> | undefined;
 let menuBar: MenuBar;
 let nativeShell: NativeShell | undefined;
 let health: Health;
@@ -63,6 +68,9 @@ function snapshot(): Snapshot {
     activeId: store.value.activeId,
     preferences: store.value.preferences,
     notificationError,
+    audio: store.value.audio,
+    activity: notifications?.activity() ?? [],
+    testCall,
     version: app.getVersion(),
     appearance: activeAppearance,
     themeCatalog: THEME_PRESETS.map(preset => ({ id: preset.id, name: preset.name, colors: resolveTheme({ preset: preset.id, mode: activeAppearance.theme.mode, accent: activeAppearance.theme.accent ?? preset.accent }, nativeTheme.shouldUseDarkColors, environment.increaseContrast, environment.systemAccent).colors }))
@@ -78,6 +86,7 @@ function show(): void {
 
 function select(id: string, focus = true): void {
   if (!accounts.entries.has(id)) return;
+  for (const entry of accounts.entries.values()) entry.view.webContents.send('account:audio-command', 'stop');
   for (const previewId of themePreviews.keys()) { themePreviews.delete(previewId); const entry = accounts.entries.get(previewId); if (entry) accounts.configureAppearance(entry); }
   store.save({ ...store.value, activeId: id });
   overlay = false;
@@ -152,12 +161,11 @@ function refreshMenus(): void {
       { label: 'Zoom Out', accelerator: 'CommandOrControl+-', enabled: canZoom && zoom > 0.5, click: () => { void command({ type: 'zoom-out' }); } },
       { label: 'Actual Size', accelerator: 'CommandOrControl+0', enabled: canZoom && zoom !== 1, click: () => { void command({ type: 'reset-zoom' }); } },
       { type: 'separator' },
-      { label: 'Show Switchboard', click: show }, { role: 'togglefullscreen' },
+      { label: 'Activity', enabled: store.value.preferences.showMenuBar, accelerator: 'CommandOrControl+Shift+A', click: () => menuBar.open() }, { label: 'Show Switchboard', click: show }, { role: 'togglefullscreen' },
       ...(!app.isPackaged ? [{ label: 'Inspect workspace', accelerator: 'CommandOrControl+Alt+I', click: () => { const id = store.value.activeId; if (id) accounts.entries.get(id)?.view.webContents.openDevTools({ mode: 'detach' }); } }] : [])
     ] },
     { role: 'windowMenu' },
     { role: 'help', submenu: [
-      { label: 'Connection health…', click: () => { void command({ type: 'health' }); } },
       { label: 'Project and documentation', click: () => { void shell.openExternal('https://github.com/ozeitis/quo-switchboard'); } },
       { label: 'Download updates…', click: () => { void shell.openExternal(releasesURL); } }
     ] }
@@ -214,6 +222,51 @@ async function command(value: unknown): Promise<void> {
       store.save({ ...store.value, accounts: store.value.accounts.map(account => account.id === id ? { ...account, zoom } : account) });
       entry.state.zoom = zoom;
       entry.view.webContents.setZoomFactor(zoom);
+      break;
+    }
+    case 'show': show(); break;
+    case 'quit': app.quit(); break;
+    case 'activity': menuBar.open(); break;
+    case 'open-activity': if (validId(cmd.id)) notifications.openActivity(cmd.id); break;
+    case 'call-action': {
+      if (!validId(cmd.id) || !validId(cmd.callId) || !CALL_ACTIONS.includes(cmd.action)) break;
+      if (!await calls.perform(cmd.id, cmd.callId, cmd.action)) await dialog.showMessageBox(window, { type: 'info', message: 'The call control is unavailable.', detail: 'The call may have changed, or another workspace has an active call. Manage it in Quo.' });
+      break;
+    }
+    case 'audio-preferences': {
+      if (!validAudio(cmd.audio)) throw new Error('Invalid microphone choice.');
+      store.save({ ...store.value, audio: { input: cmd.audio.input } });
+      for (const entry of accounts.entries.values()) accounts.configureAudio(entry);
+      break;
+    }
+    case 'audio-refresh':
+    case 'audio-test':
+    case 'audio-stop': {
+      if (cmd.type === 'audio-stop') { for (const entry of accounts.entries.values()) entry.view.webContents.send('account:audio-command', 'stop'); break; }
+      const entry = store.value.activeId ? accounts.entries.get(store.value.activeId) : undefined;
+      if ([...accounts.entries.values()].some(account => account.state.inCall || account.state.ringing || account.state.audio?.capturing)) throw new Error('Finish the call before testing audio.');
+      if (entry && appOrigin(entry.view.webContents.getURL())) entry.view.webContents.send('account:audio-command', cmd.type === 'audio-refresh' ? 'refresh' : 'test');
+      break;
+    }
+    case 'test-call': {
+      if (!validId(cmd.id) || !accounts.entries.has(cmd.id)) break;
+      if (!store.value.preferences.showMenuBar) throw new Error('Show the menu-bar icon before starting a simulation.');
+      if ([...accounts.entries.values()].some(account => account.state.inCall || account.state.ringing)) throw new Error('Finish the call before starting a simulation.');
+      if (testCall) notifications.close(`${testCall.workspaceId}:simulation:${testCall.id}`);
+      clearTimeout(testCallTimer); testCall = { id: randomUUID(), workspaceId: cmd.id, phase: 'ringing', muted: false };
+      testCallTimer = setTimeout(() => { if (testCall) notifications.close(`${testCall.workspaceId}:simulation:${testCall.id}`); testCall = undefined; publish(); }, 60_000);
+      const simulationId = testCall.id;
+      notifications.simulation(accounts.entries.get(cmd.id)!, simulationId, () => { void command({ type: 'test-call-action', callId: simulationId, action: 'answer' }); });
+      publish(); menuBar.open(); break;
+    }
+    case 'test-call-action': {
+      if (cmd.callId !== testCall?.id || !testCall) break;
+      if (cmd.action === 'answer' && testCall.phase === 'ringing') { notifications.close(`${testCall.workspaceId}:simulation:${testCall.id}`); testCall.phase = 'active'; select(testCall.workspaceId); menuBar.open(); }
+      else if (cmd.action === 'hold' && testCall.phase === 'active') testCall.phase = 'held';
+      else if (cmd.action === 'resume' && testCall.phase === 'held') testCall.phase = 'active';
+      else if (cmd.action === 'mute') testCall.muted = true;
+      else if (cmd.action === 'unmute') testCall.muted = false;
+      else if (cmd.action === 'end' || cmd.action === 'decline') { notifications.close(`${testCall.workspaceId}:simulation:${testCall.id}`); clearTimeout(testCallTimer); testCall = undefined; }
       break;
     }
     case 'new-workspace': intent('add'); break;
@@ -280,6 +333,10 @@ async function command(value: unknown): Promise<void> {
       store.save({ ...store.value, accounts: remaining, activeId: store.value.activeId === cmd.id ? remaining[0]?.id ?? null : store.value.activeId });
       break;
     }
+    case 'preference': {
+      if (!Object.hasOwn(store.value.preferences, cmd.key)) throw new Error('Invalid preference.');
+      return command({ type: 'preferences', preferences: { ...store.value.preferences, [cmd.key]: cmd.value } });
+    }
     case 'preferences': {
       if (!validPreferences(cmd.preferences)) throw new Error('Invalid preferences.');
       if (app.isPackaged && cmd.preferences.launchAtLogin !== store.value.preferences.launchAtLogin) app.setLoginItemSettings({ openAtLogin: cmd.preferences.launchAtLogin });
@@ -318,8 +375,14 @@ if (gotLock) void app.whenReady().then(async () => {
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   health = new Health(app.getPath('userData'));
-  accounts = new Accounts(window, publish, id => notifications?.reset(id), health, appearance);
-  notifications = new Notifications(window, accounts, () => store.value.preferences, select, () => { notificationError = true; publish(); });
+  accounts = new Accounts(window, publish, id => notifications?.reset(id), health, appearance, () => store.value.audio);
+  notifications = new Notifications(window, accounts, () => store.value.preferences, select, () => { notificationError = true; publish(); }, publish);
+  calls = new Calls(accounts.entries, select);
+  ipcMain.handle('account:audio-policy', event => {
+    const entry = [...accounts.entries.values()].find(entry => entry.view.webContents === event.sender);
+    if (!entry || event.senderFrame !== event.sender.mainFrame || !appOrigin(event.senderFrame.url)) throw new Error('Untrusted sender');
+    return store.value.audio;
+  });
 
   ipcMain.handle('shell:snapshot', event => { assertShell(event); return snapshot(); });
   let commands = Promise.resolve();
@@ -332,7 +395,7 @@ if (gotLock) void app.whenReady().then(async () => {
     assertShell(event);
     return enqueue(value);
   });
-  menuBar = new MenuBar(select, show, value => {
+  menuBar = new MenuBar(value => {
     void enqueue(value).catch(() => { void dialog.showMessageBox(window, { type: 'error', message: 'Could not complete that action', detail: 'Try again.' }); });
   });
   if (NativeShell.enabled()) nativeShell = new NativeShell(window, value => {
@@ -344,6 +407,8 @@ if (gotLock) void app.whenReady().then(async () => {
     const data = raw as Record<string, unknown>;
     const accountId = entry.state.id;
     switch (data.type) {
+      case 'call-action-result': if (validId(data.requestId) && typeof data.clicked === 'boolean') calls.complete(accountId, data.requestId, data.clicked); break;
+      case 'audio-state': if (validAudioState(data.audio)) { entry.state.audio = data.audio; publish(); } break;
       case 'heartbeat': health.heartbeat(accountId); break;
       case 'state':
         if (!['ready', 'sign-in', 'offline'].includes(String(data.status)) || !CALL_PHASES.includes(data.callPhase as CallPhase) || typeof data.muted !== 'boolean' || !['unmodified', 'waiting', 'compatible', 'unsupported'].includes(String(data.themeSupport)) || typeof data.inCall !== 'boolean' || typeof data.unreadKnown !== 'boolean' || typeof data.unread !== 'number' || !Number.isInteger(data.unread)) return;
@@ -355,6 +420,8 @@ if (gotLock) void app.whenReady().then(async () => {
         entry.state.inCall = data.inCall;
         entry.state.callPhase = data.callPhase as CallPhase;
         entry.state.muted = data.muted;
+        if ((data.callId === undefined || validId(data.callId)) && Array.isArray(data.callActions) && data.callActions.length <= CALL_ACTIONS.length && data.callActions.every(action => CALL_ACTIONS.includes(action as CallAction))) { entry.state.callId = data.callId; entry.state.callActions = data.callActions as CallAction[]; }
+        else { entry.state.callId = undefined; entry.state.callActions = []; }
         entry.state.themeSupport = data.themeSupport as ThemeSupport;
         publish();
         break;
@@ -368,6 +435,7 @@ if (gotLock) void app.whenReady().then(async () => {
       case 'ring':
         if (!validId(data.id) || !rate.accept(event.sender.id)) return;
         if (entry.ringId) notifications.close(`${accountId}:ring:${entry.ringId}`);
+        if (testCall) { notifications.close(`${testCall.workspaceId}:simulation:${testCall.id}`); clearTimeout(testCallTimer); testCall = undefined; }
         entry.ringId = data.id;
         entry.state.ringing = true;
         notifications.ring(entry);
@@ -423,7 +491,7 @@ app.on('before-quit', event => {
 async function shutdown(): Promise<void> {
   if (shutdownStarted) return;
   shutdownStarted = true;
-  clearInterval(healthTimer);
+  clearInterval(healthTimer); clearTimeout(testCallTimer); calls?.dispose();
   nativeShell?.dispose();
   notifications?.closeAll();
   await accounts?.close();

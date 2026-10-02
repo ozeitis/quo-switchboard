@@ -26,7 +26,7 @@ test('theme input rejects CSS injection and migration preserves profile identifi
   const account = { id: '00000000-0000-4000-8000-000000000001', name: 'Studio', color: 'blue', zoom: 0.9 };
   const { menuBarLayout: _layout, animateActivity: _animation, ...oldPreferences } = config.preferences;
   const migrated = parseConfig({ ...config, accounts: [account], preferences: { ...oldPreferences, notifications: false } });
-  assert.equal(migrated.preferences.menuBarLayout, 'separate'); assert.equal(migrated.preferences.animateActivity, true); assert.equal(migrated.preferences.notifications, false);
+  assert.equal(migrated.preferences.menuBarLayout, 'combined'); assert.equal(migrated.preferences.animateActivity, true); assert.equal(migrated.preferences.notifications, false);
   assert.equal(migrated.accounts[0]?.id, account.id); assert.equal(migrated.accounts[0]?.zoom, 0.9);
   for (const menuBarLayout of ['arbitrary', null, new String('separate')]) assert.throws(() => parseConfig({ ...config, preferences: { ...config.preferences, menuBarLayout } }));
   const restored = parseConfig({ ...migrated, accounts: [{ ...account, theme: { preset: 'custom', mode: 'dark', accent: '#ABCDEF', injected: 'ignore' } }] });

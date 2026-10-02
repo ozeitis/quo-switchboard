@@ -27,7 +27,7 @@ mac:
   entitlements: assets/entitlements.plist
   entitlementsInherit: assets/entitlements.plist
   extendInfo:
-    NSMicrophoneUsageDescription: Allow Quo to use your microphone for calls.
+    NSMicrophoneUsageDescription: Use your microphone for Quo calls and local audio tests.
   target:
     - dmg
     - zip

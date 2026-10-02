@@ -1,6 +1,6 @@
 # Security
 
-Switchboard loads remote code from Quo. That code is necessary to use Quo, but it does not receive access to Node, shell commands, local account settings, or filesystem APIs.
+Switchboard loads remote code from Quo. That code is necessary to use Quo, but it does not receive access to Node, shell commands, the account-management bridge, or filesystem APIs.
 
 ## Boundaries
 
@@ -17,7 +17,9 @@ Switchboard loads remote code from Quo. That code is necessary to use Quo, but i
 
 ## Local data
 
-The app stores workspace names, IDs, colors, and preferences in `workspaces.json`. Quo’s browser profiles contain normal web application data, including session material. The app does not export, synchronize, inspect, or log authentication tokens and does not collect passwords separately.
+The app stores workspace names, IDs, colors, preferences, and the selected microphone label in `workspaces.json`. Media device IDs are resolved inside each browser profile and are not saved in that file. Local input tests use an analyser, release their tracks, and record or upload no audio. Quo’s browser profiles contain normal web application data, including session material. The app does not export, synchronize, inspect, or log authentication tokens and does not collect passwords separately.
+
+The activity panel keeps up to twenty forwarded Quo alert titles/bodies in memory for this run. Private notification previews redact the panel. This history is never written to a file or uploaded. Quo still processes its own page data and call media.
 
 `health.json` stores this run's page-response counts, workspace UUIDs, timestamps, and bounded lifecycle events. `window.json` stores window geometry. Both are local, owner-readable files. Health sampling does not read page text, tokens, messages, phone numbers, or network payloads. The app never uploads these reports.
 
@@ -25,7 +27,7 @@ Browser-managed storage is not uniformly encrypted. Do not treat a browser profi
 
 Packaged builds enable Electron's OS-backed cookie encryption. This does not encrypt local storage, IndexedDB, or all cached website data. Do not disable the cookie-encryption fuse in later releases: Electron documents the transition as one-way. Development runs use a separate `Switchboard Development` data directory to avoid opening production profiles with a different runtime configuration. Signing changes can also affect macOS Keychain access and must be tested during upgrades.
 
-The page adapter is not a security boundary against compromised Quo code: code already running in the authenticated Quo origin can operate that Quo session and spoof its own notifications or unread badges. It still cannot select a different local workspace through the shell bridge. Badge counting reads numeric accessibility labels in navigation; menu icons use local workspace names and colors, without reading customer content.
+The page adapter is not a security boundary against compromised Quo code: code already running in the authenticated Quo origin can operate that Quo session and spoof its own notifications, unread badges, or audio status. The shared microphone label is supplied to that origin to configure capture; it does not receive another profile’s device IDs. It still cannot select a different local workspace through the shell bridge. Badge counting reads numeric accessibility labels in navigation; menu icons use local workspace names and colors, without reading customer content.
 
 ## Releases
 

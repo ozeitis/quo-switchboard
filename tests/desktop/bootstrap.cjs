@@ -1,4 +1,4 @@
-const { app, Tray } = require('electron');
+const { app } = require('electron');
 const { readFileSync } = require('node:fs');
 
 if (!process.env.SWITCHBOARD_TEST_DATA || !process.env.SWITCHBOARD_TEST_FIXTURE) throw new Error('The desktop test bootstrap requires an isolated fixture profile.');
@@ -8,22 +8,13 @@ if (process.platform === 'darwin') {
   const nativePath = require.resolve('../../dist/native/shell.node');
   const native = require(nativePath);
   const bridge = Object.create(native);
+  globalThis.nativeStatus = {};
+  Object.defineProperty(bridge, 'statusAttach', { value: callback => { globalThis.nativeStatusAction = callback; native.statusAttach(callback); } });
+  Object.defineProperty(bridge, 'statusUpdate', { value: json => { globalThis.nativeStatus = JSON.parse(json); native.statusUpdate(json); } });
+  globalThis.nativeStatusInspect = () => JSON.parse(native.statusInspect());
   Object.defineProperty(bridge, 'environment', { value: () => ({ ...native.environment(), ...(typeof globalThis.fixtureReduceMotion === 'boolean' ? { reduceMotion: globalThis.fixtureReduceMotion } : {}) }) });
   require.cache[nativePath].exports = bridge;
 }
-const setContextMenu = Tray.prototype.setContextMenu;
-const setImage = Tray.prototype.setImage;
-globalThis.trayMenus = [];
-globalThis.trayImages = new WeakMap();
-Tray.prototype.setImage = function (image) {
-  globalThis.trayImages.set(this, image);
-  return setImage.call(this, image);
-};
-Tray.prototype.setContextMenu = function (menu) {
-  globalThis.trayMenus.push({ tray: this, menu });
-  return setContextMenu.call(this, menu);
-};
-
 // Register before the production entry point creates any account views.
 app.on('web-contents-created', (_event, contents) => {
   const profile = contents.session;
