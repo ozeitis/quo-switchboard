@@ -100,7 +100,7 @@ Closing a window is different from quitting. Accounts stay open after the window
 - Remote pages run sandboxed with Node disabled and context isolation enabled.
 - Readable source, pinned dependencies, public build workflows, release checksums, and a build dependency inventory.
 
-Quo runs its own network services and may include its own telemetry. Browser profile data is local, but not every browser storage format is encrypted. See [the security boundary](SECURITY.md).
+Quo runs its own network services and may include its own telemetry. Browser profile data is local, but not every browser storage format is encrypted. See [the security boundary](SECURITY.md) and [publication review](docs/publication-review.md).
 
 ## Development
 

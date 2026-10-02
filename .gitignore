@@ -12,3 +12,19 @@ playwright-report/
 .env*
 *.p12
 *.mobileprovision
+*.p8
+*.pfx
+*.pem
+*.key
+*.har
+*.heapsnapshot
+*.cpuprofile
+
+# Local browser profiles and runtime reports are never source files.
+profiles/
+user-data/
+workspaces.json
+health.json
+window.json
+Cookies
+Login Data
