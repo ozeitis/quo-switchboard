@@ -16,6 +16,7 @@ Switchboard gives each workspace its own saved browser session and keeps them ru
 - Switch with the sidebar, menu bar, or **⌘1–9**.
 - Collapse the sidebar to an icon rail with **⌘⇧L**. Unread counts and call indicators stay visible.
 - See which workspace sent a desktop notification. Click to open that workspace.
+- See unread activity on every workspace badge and in a compact menu-bar total. Open the native menu for colored workspace initials, counts, call state, and notification controls.
 - Keep workspaces running when the window closes.
 - Preserve browser profiles across restarts and app updates.
 - Choose private notification previews, launch at login, and workspace names and colors.
@@ -60,6 +61,8 @@ The sidebar, toolbar, and workspace/settings sheets are native AppKit. macOS 26 
 2. Open it and drag **Switchboard** to **Applications**.
 3. Open Switchboard, add a workspace, and sign into Quo. Repeat for each organization.
 4. Enable notifications and microphone access when macOS asks. Use **Settings → Test notification** to check delivery.
+
+If a test banner does not appear, check **System Settings → Notifications → Switchboard** and Focus. macOS can also silence banners while the display is shared or mirrored. [Apple documents that separate control](https://support.apple.com/guide/mac-help/notifications-settings-mh40583/mac); allowing it affects other apps too.
 
 Preview builds are **ad-hoc signed, not Apple-notarized**. They do not carry a verified developer identity. macOS may block first launch; after reviewing the source and release checksums, use **System Settings → Privacy & Security → Open Anyway** if offered. Do not disable Gatekeeper globally. See [release verification and signing](docs/releases.md).
 
@@ -118,5 +121,7 @@ Development uses a separate `Switchboard Development` profile directory. Package
 | Quo API / webhooks | Not required or connected in this release. Public APIs do not replace Quo’s live call engine. |
 
 [Field-test checklist](docs/testing.md) · [Contributing](CONTRIBUTING.md)
+
+[Menu-bar design and count semantics](docs/menu-bar.md)
 
 Switchboard is independent software. It is not affiliated with or endorsed by Quo. Quo’s website, service, and trademarks belong to their respective owners.

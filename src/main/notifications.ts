@@ -45,7 +45,7 @@ export class Notifications {
   }
 
   test(entry: LiveAccount): void {
-    this.show(entry, `${entry.state.id}:test:${Date.now()}`, null, 'Notifications are working', 'Click to open this workspace.', 'test', false);
+    this.show(entry, `${entry.state.id}:test:${Date.now()}`, null, 'Test notification', 'Click to open this workspace.', 'test', false);
   }
 
   private show(entry: LiveAccount, key: string, pageId: string | null, title: string, body: string, tag: string, silent: boolean, ringId?: string): void {

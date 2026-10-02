@@ -1,6 +1,7 @@
 #import <AppKit/AppKit.h>
 #import <QuartzCore/QuartzCore.h>
 #include <node_api.h>
+#include <cstring>
 #include <string>
 
 // The material is decorative. Masked-out areas must leave Quo's controls reachable.
@@ -370,7 +371,9 @@ static NSColor *color(NSString *name) {
   }
   cell.accessibilityElement = YES;
   cell.accessibilityRole = NSAccessibilityGroupRole;
-  cell.accessibilityLabel = [NSString stringWithFormat:@"%@, %@, %ld unread", account[@"name"], status(account), (long)count];
+  NSString *unread = [account[@"unreadKnown"] boolValue] ? [NSString stringWithFormat:@"%ld unread", (long)count]
+    : count ? [NSString stringWithFormat:@"At least %ld unread", (long)count] : @"Unread unavailable";
+  cell.accessibilityLabel = [NSString stringWithFormat:@"%@, %@, %@", account[@"name"], status(account), unread];
   cell.toolTip = [NSString stringWithFormat:@"%@ — %@%@", account[@"name"], status(account), row < 9 ? [NSString stringWithFormat:@" (⌘%ld)", (long)row + 1] : @""];
   return cell;
 }
@@ -480,22 +483,25 @@ static NSColor *color(NSString *name) {
   alert.informativeText = @"Closing the window keeps every workspace running. Quitting stops calls and notifications.";
   [alert addButtonWithTitle:@"Save"];
   [alert addButtonWithTitle:@"Cancel"];
-  NSView *fields = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 380, 192)];
-  NSArray *keys = @[@"notifications", @"privateNotifications", @"launchAtLogin", @"experimentalAnswer"];
-  NSArray *titles = @[@"Desktop notifications", @"Hide caller and message previews", @"Open Switchboard at login", @"Answer from notifications (experimental)"];
+  NSView *fields = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 380, 252)];
+  NSArray *keys = @[@"notifications", @"privateNotifications", @"launchAtLogin", @"showMenuBar", @"menuBarCount", @"experimentalAnswer"];
+  NSArray *titles = @[@"Desktop notifications", @"Hide caller and message previews", @"Open Switchboard at login", @"Show Switchboard in the menu bar", @"Show unread count in the menu bar", @"Answer from notifications (experimental)"];
   NSMutableArray<NSButton *> *buttons = [NSMutableArray array];
   for (NSUInteger i = 0; i < keys.count; ++i) {
     NSButton *button = [NSButton checkboxWithTitle:titles[i] target:nil action:nil];
-    button.frame = NSMakeRect(0, 162 - i * 30, 380, 24);
+    button.frame = NSMakeRect(0, 222 - i * 30, 380, 24);
     button.state = [_snapshot[@"preferences"][keys[i]] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
     [buttons addObject:button];
     [fields addSubview:button];
   }
-  NSTextField *note = label(@"Direct answering depends on Quo’s current call controls.", NSMakeRect(0, 34, 380, 18), 11);
+  NSTextField *delivery = label(@"macOS can silence banners during Focus or screen sharing.", NSMakeRect(0, 49, 380, 16), 11);
+  delivery.textColor = NSColor.secondaryLabelColor;
+  [fields addSubview:delivery];
+  NSTextField *note = label(@"Direct answering depends on Quo’s current call controls.", NSMakeRect(0, 31, 380, 16), 11);
   note.textColor = NSColor.secondaryLabelColor;
   [fields addSubview:note];
   NSButton *test = [self button:@"Test notification" symbol:@"bell" frame:NSMakeRect(0, 0, 154, 26) action:@selector(testNotification:) parent:fields];
-  test.enabled = [_snapshot[@"activeId"] isKindOfClass:NSString.class];
+  test.enabled = [_snapshot[@"activeId"] isKindOfClass:NSString.class] && [_snapshot[@"preferences"][@"notifications"] boolValue];
   alert.accessoryView = fields;
   alert.window.preventsApplicationTerminationWhenModal = NO;
   _sheet = alert;
@@ -588,6 +594,38 @@ static napi_value form(napi_env env, napi_callback_info info) {
 static napi_value settings(napi_env env, napi_callback_info info) { [controller settings]; return nullptr; }
 static napi_value dismiss(napi_env env, napi_callback_info info) { [controller dismiss]; return nullptr; }
 static napi_value dispose(napi_env env, napi_callback_info info) { [controller dispose]; controller = nil; return nullptr; }
+static napi_value image(napi_env env, napi_callback_info info) {
+  size_t count = 1; napi_value arg;
+  napi_get_cb_info(env, info, &count, &arg, nullptr, nullptr);
+  NSString *json = count ? stringArgument(env, arg) : nil;
+  NSDictionary *options = json ? [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil] : nil;
+  if (![options isKindOfClass:NSDictionary.class] || !NSThread.isMainThread) {
+    napi_throw_error(env, nullptr, "Native images require options on the main thread"); return nullptr;
+  }
+  NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:nil pixelsWide:36 pixelsHigh:36 bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+  std::memset(bitmap.bitmapData, 0, bitmap.bytesPerRow * bitmap.pixelsHigh);
+  [NSGraphicsContext saveGraphicsState];
+  NSGraphicsContext.currentContext = [NSGraphicsContext graphicsContextWithBitmapImageRep:bitmap];
+  NSAffineTransform *scale = [NSAffineTransform transform];
+  [scale scaleBy:2];
+  [scale concat];
+  if ([options[@"type"] isEqual:@"avatar"]) {
+    WorkspaceAvatar *avatar = [[WorkspaceAvatar alloc] initWithFrame:NSMakeRect(0, 0, 18, 18)];
+    avatar.account = options;
+    [avatar drawRect:avatar.bounds];
+  } else {
+    NSString *symbol = [options[@"state"] isEqual:@"ringing"] ? @"phone.badge.waveform.fill" : [options[@"state"] isEqual:@"call"] ? @"phone.fill" : @"rectangle.stack";
+    NSImage *icon = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
+    if (!icon) icon = [NSImage imageWithSystemSymbolName:@"phone.fill" accessibilityDescription:nil];
+    icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[NSColor.blackColor]]];
+    [icon drawInRect:NSMakeRect(1, 1, 16, 16)];
+  }
+  [NSGraphicsContext restoreGraphicsState];
+  NSData *png = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+  napi_value result;
+  napi_create_buffer_copy(env, png.length, png.bytes, nullptr, &result);
+  return result;
+}
 static void cleanup(void *) { [controller dispose]; controller = nil; }
 static napi_value initialize(napi_env env, napi_value exports) {
   napi_property_descriptor properties[] = {
@@ -596,7 +634,8 @@ static napi_value initialize(napi_env env, napi_value exports) {
     {"form", nullptr, form, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"settings", nullptr, settings, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"dismiss", nullptr, dismiss, nullptr, nullptr, nullptr, napi_default, nullptr},
-    {"dispose", nullptr, dispose, nullptr, nullptr, nullptr, napi_default, nullptr}
+    {"dispose", nullptr, dispose, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"image", nullptr, image, nullptr, nullptr, nullptr, napi_default, nullptr}
   };
   napi_define_properties(env, exports, sizeof(properties) / sizeof(properties[0]), properties);
   napi_add_env_cleanup_hook(env, cleanup, nullptr);

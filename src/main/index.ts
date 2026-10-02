@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, shell, Tray, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, powerMonitor, powerSaveBlocker, shell, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -9,6 +9,7 @@ import { Store } from './store';
 import { NativeShell } from './native-shell';
 import { Health } from './health';
 import { WindowState } from './window-state';
+import { MenuBar } from './menu-bar';
 import { validColor, validId, validName, validPreferences, ZOOM_FACTORS, type ShellCommand, type Snapshot } from '../shared/model';
 import { SHELL_LAYOUT } from '../shared/layout';
 
@@ -22,7 +23,7 @@ let window: BrowserWindow;
 let store: Store;
 let accounts: Accounts;
 let notifications: Notifications;
-let tray: Tray;
+let menuBar: MenuBar;
 let nativeShell: NativeShell | undefined;
 let health: Health;
 let healthTimer: ReturnType<typeof setInterval>;
@@ -41,7 +42,7 @@ function snapshot(): Snapshot {
     nativeShell: !!nativeShell,
     sidebarCollapsed: store.value.sidebarCollapsed,
     macAppearance: store.value.macAppearance,
-    accounts: store.value.accounts.map(account => accounts.entries.get(account.id)?.state ?? { ...account, status: 'loading', unread: 0, ringing: false, inCall: false }),
+    accounts: store.value.accounts.map(account => accounts.entries.get(account.id)?.state ?? { ...account, status: 'loading', unread: 0, unreadKnown: false, ringing: false, inCall: false }),
     activeId: store.value.activeId,
     preferences: store.value.preferences,
     notificationError,
@@ -84,6 +85,7 @@ function publish(): void {
   layoutWorkspaces();
   const state = snapshot();
   nativeShell?.update(state);
+  menuBar?.update(state);
   window.webContents.send('shell:state', state);
   const active = state.accounts.find(account => account.id === state.activeId);
   window.setTitle(active ? `${active.name} — Switchboard` : 'Switchboard');
@@ -139,13 +141,6 @@ function refreshMenus(): void {
       { label: 'Download updates…', click: () => { void shell.openExternal(releasesURL); } }
     ] }
   ]));
-  if (tray) {
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: 'Show Switchboard', click: show }, { type: 'separator' },
-      ...store.value.accounts.map(account => ({ label: `${account.name}${accounts.entries.get(account.id)?.state.ringing ? ' — Incoming call' : ''}`, click: () => select(account.id) })),
-      { type: 'separator' }, { label: 'Add workspace…', click: () => intent('add') }, { role: 'quit' }
-    ]));
-  }
 }
 
 function assertShell(event: IpcMainInvokeEvent): void {
@@ -292,6 +287,9 @@ if (gotLock) void app.whenReady().then(async () => {
     assertShell(event);
     return enqueue(value);
   });
+  menuBar = new MenuBar(select, show, value => {
+    void enqueue(value).catch(() => { void dialog.showMessageBox(window, { type: 'error', message: 'Could not complete that action', detail: 'Try again.' }); });
+  });
   if (NativeShell.enabled()) nativeShell = new NativeShell(window, value => {
     void enqueue(value).catch(error => { void dialog.showMessageBox(window, { type: 'error', message: 'Could not complete that action', detail: error instanceof Error ? error.message : 'Try again.' }); });
   });
@@ -303,11 +301,12 @@ if (gotLock) void app.whenReady().then(async () => {
     switch (data.type) {
       case 'heartbeat': health.heartbeat(accountId); break;
       case 'state':
-        if (!['ready', 'sign-in', 'offline'].includes(String(data.status)) || typeof data.inCall !== 'boolean' || typeof data.unread !== 'number' || !Number.isInteger(data.unread)) return;
+        if (!['ready', 'sign-in', 'offline'].includes(String(data.status)) || typeof data.inCall !== 'boolean' || typeof data.unreadKnown !== 'boolean' || typeof data.unread !== 'number' || !Number.isInteger(data.unread)) return;
         if (entry.state.status !== data.status) health.record(data.status as 'ready' | 'sign-in' | 'offline', accountId);
         entry.state.status = data.status as 'ready' | 'sign-in' | 'offline';
         accounts.applyZoom(entry);
         entry.state.unread = Math.max(0, Math.min(data.unread, 9999));
+        entry.state.unreadKnown = data.unreadKnown;
         entry.state.inCall = data.inCall;
         publish();
         break;
@@ -340,11 +339,6 @@ if (gotLock) void app.whenReady().then(async () => {
   });
 
   for (const account of store.value.accounts) accounts.create(account);
-  const image = nativeImage.createFromPath(join(__dirname, 'tray.png')).resize({ width: 18, height: 18 });
-  image.setTemplateImage(true);
-  tray = new Tray(image);
-  tray.setToolTip('Switchboard');
-  tray.on('click', show);
   window.on('resize', () => { layoutWorkspaces(); nativeShell?.update(snapshot()); });
   window.on('close', event => { if (!quitting) { event.preventDefault(); window.hide(); } });
   powerMonitor.on('suspend', () => health.suspend());
@@ -385,7 +379,7 @@ async function shutdown(): Promise<void> {
   notifications?.closeAll();
   await accounts?.close();
   health?.close();
-  tray?.destroy();
+  menuBar?.dispose();
   if (sleepBlocker !== null) powerSaveBlocker.stop(sleepBlocker);
   quitting = true;
   app.quit();

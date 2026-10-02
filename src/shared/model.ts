@@ -8,6 +8,8 @@ export interface Preferences {
   privateNotifications: boolean;
   experimentalAnswer: boolean;
   launchAtLogin: boolean;
+  showMenuBar: boolean;
+  menuBarCount: boolean;
 }
 export interface Config {
   version: 1;
@@ -20,6 +22,7 @@ export interface Config {
 export interface AccountState extends Account {
   status: Status;
   unread: number;
+  unreadKnown: boolean;
   ringing: boolean;
   inCall: boolean;
 }
@@ -44,7 +47,7 @@ export type AccountEvent =
   | { type: 'heartbeat' }
   | { type: 'notification'; id: string; title: string; body: string; tag: string; silent: boolean }
   | { type: 'notification-close'; id: string }
-  | { type: 'state'; status: 'ready' | 'sign-in' | 'offline'; unread: number; inCall: boolean }
+  | { type: 'state'; status: 'ready' | 'sign-in' | 'offline'; unread: number; unreadKnown: boolean; inCall: boolean }
   | { type: 'ring'; id: string }
   | { type: 'ring-end'; id: string }
   | { type: 'answer-result'; id: string; clicked: boolean };
@@ -53,7 +56,9 @@ export const DEFAULT_PREFERENCES: Preferences = {
   notifications: true,
   privateNotifications: false,
   experimentalAnswer: false,
-  launchAtLogin: false
+  launchAtLogin: false,
+  showMenuBar: true,
+  menuBarCount: true
 };
 export const emptyConfig = (): Config => ({ version: 1, sidebarCollapsed: false, macAppearance: true, accounts: [], activeId: null, preferences: { ...DEFAULT_PREFERENCES } });
 
@@ -76,7 +81,11 @@ export function validPreferences(value: unknown): value is Preferences {
 export function parseConfig(value: unknown): Config {
   if (!value || typeof value !== 'object') throw new Error('Invalid settings file');
   const v = value as Config;
-  if (v.version !== 1 || !Array.isArray(v.accounts) || v.accounts.length > 12 || !validPreferences(v.preferences)
+  const preferences = { ...v.preferences,
+    showMenuBar: v.preferences?.showMenuBar === undefined ? true : v.preferences.showMenuBar,
+    menuBarCount: v.preferences?.menuBarCount === undefined ? true : v.preferences.menuBarCount
+  };
+  if (v.version !== 1 || !Array.isArray(v.accounts) || v.accounts.length > 12 || !validPreferences(preferences)
     || (v.macAppearance !== undefined && typeof v.macAppearance !== 'boolean')) throw new Error('Unsupported settings file');
   const seen = new Set<string>();
   for (const a of v.accounts) {
@@ -89,7 +98,7 @@ export function parseConfig(value: unknown): Config {
     macAppearance: v.macAppearance !== false,
     accounts: v.accounts.map(a => ({ id: a.id, name: a.name.trim(), color: a.color, ...(a.zoom !== undefined ? { zoom: a.zoom } : {}) })),
     activeId: seen.has(v.activeId ?? '') ? v.activeId : v.accounts[0]?.id ?? null,
-    preferences: Object.fromEntries(Object.keys(DEFAULT_PREFERENCES).map(k => [k, v.preferences[k as keyof Preferences]])) as unknown as Preferences
+    preferences: Object.fromEntries(Object.keys(DEFAULT_PREFERENCES).map(k => [k, preferences[k as keyof Preferences]])) as unknown as Preferences
   };
 }
 

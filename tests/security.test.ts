@@ -38,6 +38,17 @@ test('display settings preserve legacy profiles and reject invalid zoom values',
   assert.throws(() => parseConfig({ ...legacy, macAppearance: 'yes' }));
   assert.equal(parseConfig({ ...legacy, macAppearance: false, accounts: [{ ...account, zoom: 0.9 }] }).accounts[0]?.zoom, 0.9);
 });
+test('menu bar preferences migrate without resetting existing notification choices', () => {
+  const { showMenuBar: _visible, menuBarCount: _count, ...preferences } = emptyConfig().preferences;
+  const legacy = { ...emptyConfig(), preferences: { ...preferences, notifications: false, privateNotifications: true } };
+  const restored = parseConfig(legacy);
+  assert.equal(restored.preferences.showMenuBar, true);
+  assert.equal(restored.preferences.menuBarCount, true);
+  assert.equal(restored.preferences.notifications, false);
+  assert.equal(restored.preferences.privateNotifications, true);
+  for (const value of [null, 'true', 1]) assert.throws(() => parseConfig({ ...legacy, preferences: { ...legacy.preferences, showMenuBar: value } }));
+  assert.throws(() => parseConfig({ ...legacy, preferences: { showMenuBar: true, menuBarCount: true } }));
+});
 test('removed active accounts fall back without retaining unknown settings', () => {
   const account = { id: '00000000-0000-4000-8000-000000000001', name: ' Studio ', color: 'blue' };
   const config = parseConfig({ ...emptyConfig(), activeId: 'missing', accounts: [account], injected: 'ignore' });

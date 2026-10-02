@@ -35,6 +35,10 @@ Native table rows draw an inset selection inside the actual viewport; extra AppK
 
 Settings are validated on read and write, saved through a temporary file and rename, and created with owner-only file permissions. A malformed settings file stops startup without replacing it. Browser profiles live outside the application bundle under `~/Library/Application Support/Switchboard`.
 
+`MenuBar` owns one native status item through Electron's public Tray API. AppKit renders its SF Symbol and colored initial icons at Retina resolution. The native menu shows per-workspace unread activity and call state, prioritizes ringing workspaces, and routes selections through the existing account coordinator. A stable status-item identity preserves placement. Visibility and count preferences survive updates. Native appearance changes regenerate the small images; the cache is bounded to current workspace names/colors.
+
+The unread adapter reads Quo's semantic navigation badge labels, with a title fallback. It reports unavailable counts explicitly and preserves hovered-row counts while Quo displays More in place of a badge. It never sums the title with sidebar badges or counts the selected conversation list again. Unread changes update the rail, Dock, and status item; they do not replay old desktop alerts. See [count semantics and menu-bar design](menu-bar.md).
+
 Email login navigates from `my.quo.com` through Quo's production Auth0 domain, `signin.openphone.com`, and back to Quo in the same view. Keeping the browsing context intact preserves Quo's authentication transaction in session storage. The authentication origin is allowed to navigate but receives no page adapter or privileged bridge. Ordinary external links open in the browser without resetting the current workspace's call state.
 
 ## Notification flow
@@ -106,7 +110,9 @@ No relay, API key storage, server, or paid subscription is part of this release.
 | `src/main/index.ts` | App lifecycle, menus, IPC authorization, command routing |
 | `src/main/accounts.ts` | Profile isolation, navigation, permissions, views |
 | `src/main/text-menu.ts` | Native text menus bound to their originating browser view |
+| `src/main/menu-bar.ts` | Native status item, per-workspace menu, and display preferences |
 | `src/preload/appearance.ts` | Scoped Quo navigation and typography adaptation |
+| `src/preload/unread.ts` | Semantic unread badge observation and unavailable-state reporting |
 | `src/main/notifications.ts` | Native notifications and account-bound actions |
 | `src/main/store.ts` | Validated settings persistence |
 | `src/main/policy.ts` | URL policy, text normalization, rate limits |

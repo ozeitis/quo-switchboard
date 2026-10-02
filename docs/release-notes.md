@@ -1,4 +1,12 @@
-Switchboard for Quo 0.2.4 — stable Quo navigation and better Mac interaction.
+Switchboard for Quo 0.2.5 — unread badges and a native workspace menu bar.
+
+- Workspace badges now observe Quo's inbox navigation, instead of relying only on its window title. Hovering More does not drop a known inbox count. Missing counts are reported as unavailable.
+- A compact SF Symbol and optional total in the menu bar. Native menu rows show colored workspace initials, unread counts, and call state; ringing workspaces come first.
+- Quick switching while the window is closed, notification settings and testing, and connection health. Visibility/count preferences survive updates.
+- Exact observed counts inside the menu, with a compact total beside the status icon. Settings explain Focus and screen-sharing banner suppression.
+- No replay of old unread activity as desktop alerts and no estimated business metrics.
+
+Version 0.2.4 stabilized Quo navigation and improved Mac interaction:
 
 - Quo's own sidebar stays at its full width across window sizes and workspace-sidebar modes.
 - Mac system typography in Quo's sidebar and main content. Dyslexia, code, handwriting, and emoji fonts remain intact; View → Use Mac Fonts switches back to Quo's fonts.

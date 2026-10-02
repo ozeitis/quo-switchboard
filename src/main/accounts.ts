@@ -41,7 +41,7 @@ export class Accounts {
       backgroundThrottling: false, spellcheck: true, autoplayPolicy: 'no-user-gesture-required'
     } });
     view.setBackgroundColor('#ffffff');
-    const entry: LiveAccount = { state: { ...account, status: 'loading', unread: 0, ringing: false, inCall: false }, view, ringId: null, recovery: new RecoveryBudget() };
+    const entry: LiveAccount = { state: { ...account, status: 'loading', unread: 0, unreadKnown: false, ringing: false, inCall: false }, view, ringId: null, recovery: new RecoveryBudget() };
     this.entries.set(account.id, entry);
     this.window.contentView.addChildView(view);
     const contents = view.webContents;

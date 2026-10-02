@@ -2,10 +2,10 @@ import { test, expect, _electron, type ElectronApplication, type Page } from '@p
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { Menu as NativeMenu, Notification as NativeNotification } from 'electron';
+import type { Menu as NativeMenu, Notification as NativeNotification, Tray as NativeTray, NativeImage } from 'electron';
 
 interface NativeRecord { notification: NativeNotification; title: string; body: string; subtitle: string; actions: string[] }
-type MainGlobal = typeof globalThis & { notificationRecords: NativeRecord[]; externalOrigins: string[]; textMenus: { menu: NativeMenu; frameURL?: string }[] };
+type MainGlobal = typeof globalThis & { notificationRecords: NativeRecord[]; externalOrigins: string[]; textMenus: { menu: NativeMenu; frameURL?: string }[]; trayMenus: { menu: NativeMenu; tray: NativeTray }[]; trayImages: WeakMap<NativeTray, NativeImage> };
 
 const fixture = `<!doctype html><html><head><title>Quo fixture</title></head><body>
 <h1>Quo test workspace</h1><button id="notify">Send notification</button><button id="ring">Simulate incoming call</button>
@@ -30,6 +30,15 @@ h1 { font-family:var(--heading-font); } code { font-family:var(--code-font); }
 </style>`).replace('<body>', '<body><aside id="sideMenu"><p>Search</p><p>Contacts</p></aside><main>')
   .replace('<script>', '<textarea aria-label="Draft">Fixture draft</textarea><pre><code>monospace sample</code></pre><script>')
   .replace('</body>', '</main></body>');
+
+const unreadFixture = desktopFixture.replace('<p>Search</p><p>Contacts</p>', `<nav aria-label="Inboxes"><div role="list">
+<div role="listitem" id="line-one"><span>Line one 1234567</span><span aria-label="1 unread conversation">1</span></div>
+<div role="listitem"><span aria-label="7 unread conversations">7</span></div>
+<div role="listitem"><span aria-label="3 unread conversations">3</span></div>
+<div role="listitem"><span aria-label="11 unread conversations">11</span></div>
+<div role="listitem">Muted line</div>
+</div></nav><nav aria-label="Your team"></nav>`)
+  .replace('<textarea', '<span aria-label="99 unread messages">Selected conversation badge outside the sidebar</span><textarea');
 
 let application: ElectronApplication;
 let window: Page;
@@ -435,7 +444,7 @@ test('workspace zoom is isolated, survives restart, and leaves authentication at
   await application.close();
   await launch(dataDirectory, true);
   await expect.poll(async () => (await zooms()).find(value => value.path?.includes(config.accounts[0].id))?.zoom).toBeCloseTo(0.9);
-  expect((await zooms()).find(value => value.path?.includes(config.accounts[1].id))?.zoom).toBe(1);
+  await expect.poll(async () => (await zooms()).find(value => value.path?.includes(config.accounts[1].id))?.zoom).toBe(1);
   await shellCommand({ type: 'reset-zoom' });
   await expect.poll(async () => (await zooms()).find(value => value.path?.includes(config.accounts[0].id))?.zoom).toBe(1);
 });
@@ -464,4 +473,94 @@ test('native text menus bind their commands and frame to the workspace that open
   });
   expect(await studio.getByRole('textbox', { name: 'Draft' }).evaluate(element => { const field = element as HTMLTextAreaElement; return field.selectionEnd - field.selectionStart; })).toBe('Studio draft'.length);
   expect(await workshop.getByRole('textbox', { name: 'Draft' }).inputValue()).toBe('Workshop draft');
+});
+
+test('Quo sidebar badges drive account counts without title double-counting, hover flicker, or stale zeroes', async () => {
+  await application.close();
+  await launch(dataDirectory, false, true, unreadFixture);
+  const studio = await addNative('Studio');
+  const workshop = await addNative('Workshop');
+  const snapshot = () => window.evaluate(() => (window as unknown as { switchboard: { snapshot(): Promise<{ accounts: { unread: number; unreadKnown: boolean }[] }> } }).switchboard.snapshot());
+  await expect.poll(async () => (await snapshot()).accounts.map(account => [account.unread, account.unreadKnown])).toEqual([[22, true], [22, true]]);
+  await studio.evaluate(() => {
+    document.title = '(999) Quo';
+    document.querySelector('#line-one [aria-label]')!.replaceWith(Object.assign(document.createElement('button'), { ariaLabel: 'More menu' }));
+  });
+  await expect.poll(async () => (await snapshot()).accounts[0]?.unread).toBe(22);
+  await workshop.evaluate(() => document.querySelector('[aria-label="11 unread conversations"]')!.setAttribute('aria-label', '13 unread conversations'));
+  await expect.poll(async () => (await snapshot()).accounts.map(account => account.unread)).toEqual([22, 24]);
+  await studio.evaluate(() => {
+    document.querySelectorAll('#sideMenu [aria-label$="unread conversations"]').forEach(element => element.remove());
+    document.querySelector('#line-one button')!.remove();
+    const direct = document.createElement('span'); direct.setAttribute('aria-label', '2 unread messages');
+    document.querySelector('nav[aria-label="Your team"]')!.append(direct);
+  });
+  await expect.poll(async () => (await snapshot()).accounts[0]?.unread).toBe(2);
+  await studio.evaluate(() => document.querySelector('nav[aria-label="Your team"]')!.replaceChildren());
+  await expect.poll(async () => (await snapshot()).accounts[0]?.unread).toBe(0);
+  expect((await snapshot()).accounts[0]?.unreadKnown).toBe(true);
+  await studio.evaluate(() => { document.querySelector('nav[aria-label="Inboxes"]')!.remove(); document.title = '(7) Quo'; });
+  await expect.poll(async () => (await snapshot()).accounts[0]?.unread).toBe(7);
+  await studio.evaluate(() => { document.title = 'Quo'; });
+  await expect.poll(async () => (await snapshot()).accounts[0]).toMatchObject({ unread: 0, unreadKnown: false });
+});
+
+test('the native menu bar reports each account, routes calls with the window closed, and preserves display preferences', async () => {
+  await application.close();
+  await launch(dataDirectory, false, true, unreadFixture);
+  const studio = await addNative('Studio');
+  const workshop = await addNative('Workshop');
+  const config = JSON.parse(await readFile(join(dataDirectory, 'workspaces.json'), 'utf8'));
+  await shellCommand({ type: 'select', id: config.accounts[0].id });
+  const menu = () => application.evaluate(() => {
+    const record = (globalThis as MainGlobal).trayMenus.at(-1)!;
+    return { title: record.tray.getTitle(), image: (globalThis as MainGlobal).trayImages.get(record.tray)!.toDataURL(),
+      items: record.menu.items.map(item => ({ id: item.id, label: item.label, sublabel: item.sublabel, type: item.type, checked: item.checked, enabled: item.enabled, iconSize: typeof item.icon === 'object' ? item.icon?.getSize() : undefined })) };
+  });
+  const click = (id: string) => application.evaluate(({ BrowserWindow }, id) => {
+    const item = (globalThis as MainGlobal).trayMenus.at(-1)!.menu.getMenuItemById(id)!;
+    item.click(item, BrowserWindow.getAllWindows()[0], { shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, triggeredByAccelerator: false });
+  }, id);
+  await expect.poll(async () => (await menu()).title).toBe('44');
+  const initial = await menu();
+  expect(initial.items.find(item => item.id === 'summary')?.label).toBe('44 unread');
+  expect(initial.items.find(item => item.id === `workspace:${config.accounts[0].id}`)).toMatchObject({ label: 'Studio — 22 unread', sublabel: '', type: 'radio', checked: true, iconSize: { width: 18, height: 18 } });
+  await studio.evaluate(() => document.querySelector('[aria-label="11 unread conversations"]')!.setAttribute('aria-label', '190 unread conversations'));
+  await expect.poll(async () => (await menu()).title).toBe('99+');
+  expect((await menu()).items.find(item => item.id === 'summary')?.label).toBe('223 unread');
+  expect((await menu()).items.find(item => item.id === `workspace:${config.accounts[0].id}`)?.label).toBe('Studio — 201 unread');
+  await studio.evaluate(() => document.querySelector('[aria-label="190 unread conversations"]')!.setAttribute('aria-label', '11 unread conversations'));
+  await expect.poll(async () => (await menu()).title).toBe('44');
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+  await workshop.evaluate(() => document.getElementById('ring')!.click());
+  await expect.poll(async () => (await menu()).items.find(item => item.id?.startsWith('workspace:'))?.label).toBe('Workshop — Incoming call');
+  expect((await menu()).image).not.toBe(initial.image);
+  await click(`workspace:${config.accounts[1].id}`);
+  await expect(window.locator('#workspace-title')).toHaveText('Workshop');
+  expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(true);
+  expect(await workshop.evaluate(() => document.body.dataset.answered)).toBeUndefined();
+  await workshop.getByRole('button', { name: 'Answer call' }).click();
+  await workshop.getByRole('button', { name: 'End call' }).click();
+  await click('test-notification');
+  await expect.poll(async () => (await notifications()).at(-1)?.subtitle).toBe('Test notification');
+  await workshop.evaluate(() => document.querySelector('nav[aria-label="Inboxes"]')!.remove());
+  await expect.poll(async () => (await menu()).title).toBe('22+');
+  expect((await menu()).items.find(item => item.id === `workspace:${config.accounts[1].id}`)?.sublabel).toContain('Unread unavailable');
+  await workshop.reload();
+  await expect.poll(async () => (await menu()).title).toBe('44');
+  const preferences = config.preferences;
+  await shellCommand({ type: 'preferences', preferences: { ...preferences, menuBarCount: false } });
+  expect((await menu()).title).toBe('');
+  expect((await menu()).items.find(item => item.id === 'summary')?.label).toBe('44 unread');
+  await shellCommand({ type: 'preferences', preferences: { ...preferences, menuBarCount: false, showMenuBar: false } });
+  expect(await application.evaluate(() => (globalThis as MainGlobal).trayMenus.at(-1)!.tray.isDestroyed())).toBe(true);
+  await shellCommand({ type: 'preferences', preferences: { ...preferences, menuBarCount: false, notifications: false } });
+  expect((await menu()).items.find(item => item.id === 'test-notification')?.enabled).toBe(false);
+  await application.close();
+  await launch(dataDirectory, true, true, unreadFixture);
+  await expect.poll(async () => (await menu()).items.find(item => item.id === 'summary')?.label).toBe('44 unread');
+  expect((await menu()).title).toBe('');
+  const restored = JSON.parse(await readFile(join(dataDirectory, 'workspaces.json'), 'utf8'));
+  expect(restored.preferences).toMatchObject({ showMenuBar: true, menuBarCount: false, notifications: false });
+  expect(restored.accounts.map((account: { id: string }) => account.id)).toEqual(config.accounts.map((account: { id: string }) => account.id));
 });

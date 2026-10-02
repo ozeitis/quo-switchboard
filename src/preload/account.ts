@@ -3,6 +3,7 @@ import type { AccountEvent } from '../shared/model';
 import { appOrigin } from '../main/policy';
 import { findAnswerButton, hasActiveCall } from './call-controls';
 import { DesktopAppearance } from './appearance';
+import { UnreadCounter } from './unread';
 
 // This preload never receives account credentials or exposes Electron APIs to Quo.
 if (appOrigin(location.href) && process.isMainFrame) {
@@ -89,6 +90,7 @@ if (appOrigin(location.href) && process.isMainFrame) {
 
   let ring: { id: string; button: HTMLElement } | null = null;
   let lastState = '';
+  const unread = new UnreadCounter();
   const update = () => {
     appearance?.update();
     const button = findAnswerButton(document);
@@ -104,7 +106,7 @@ if (appOrigin(location.href) && process.isMainFrame) {
       || !!document.querySelector('input[autocomplete="current-password"], input[autocomplete="one-time-code"]');
     const state: AccountEvent = {
       type: 'state', status: !navigator.onLine ? 'offline' : signIn ? 'sign-in' : 'ready',
-      unread: Math.min(Number(document.title.match(/^\((\d+)\)/)?.[1] ?? 0), 9999),
+      ...(signIn ? { unread: 0, unreadKnown: false } : unread.read(document)),
       inCall: hasActiveCall(document)
     };
     const encoded = JSON.stringify(state);
