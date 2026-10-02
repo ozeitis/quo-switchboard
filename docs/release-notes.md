@@ -1,4 +1,10 @@
-Switchboard for Quo 0.2.2 — tighter spacing and quiet native controls.
+Switchboard for Quo 0.2.3 — remove the extra content frame.
+
+- Quo extends to the window's right and bottom edges, removing the middle of three nested borders.
+- The top-left content curve remains. One masked native glass surface joins the sidebar and toolbar; page controls remain clickable through its cutout.
+- Quo's own panel styling remains intact.
+
+Version 0.2.2 tightened spacing and native controls:
 
 - A 56-point compact workspace rail, a 208-point expanded sidebar, and a 52-point single-line toolbar.
 - Small SF Symbol buttons with native hover feedback. Healthy workspaces no longer repeat “Workspace loaded” in the toolbar and rows.

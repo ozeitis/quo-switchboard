@@ -1,16 +1,30 @@
 #import <AppKit/AppKit.h>
+#import <QuartzCore/QuartzCore.h>
 #include <node_api.h>
 #include <string>
+
+// The material is decorative. Masked-out areas must leave Quo's controls reachable.
+API_AVAILABLE(macos(26.0))
+@interface ChromeGlassView : NSGlassEffectView
+@end
+@implementation ChromeGlassView
+- (NSView *)hitTest:(NSPoint)point { return nil; }
+@end
+@interface ChromeVibrancyView : NSVisualEffectView
+@end
+@implementation ChromeVibrancyView
+- (NSView *)hitTest:(NSPoint)point { return nil; }
+@end
 
 // Build with the macOS 26 SDK or newer. Older systems retain native vibrancy.
 static NSView *material(NSRect frame, NSView *content) {
   if (@available(macOS 26.0, *)) {
-    NSGlassEffectView *view = [[NSGlassEffectView alloc] initWithFrame:frame];
+    NSGlassEffectView *view = [[ChromeGlassView alloc] initWithFrame:frame];
     view.cornerRadius = 0;
     view.contentView = content;
     return view;
   }
-  NSVisualEffectView *view = [[NSVisualEffectView alloc] initWithFrame:frame];
+  NSVisualEffectView *view = [[ChromeVibrancyView alloc] initWithFrame:frame];
   view.material = NSVisualEffectMaterialSidebar;
   view.blendingMode = NSVisualEffectBlendingModeBehindWindow;
   view.state = NSVisualEffectStateFollowsWindowActiveState;
@@ -114,6 +128,7 @@ static NSColor *color(NSString *name) {
 @property(weak) NSView *host;
 @property NSArray *originalAccessibilityChildren;
 @property NSView *chrome;
+@property CAShapeLayer *chromeMask;
 @property NSView *sidebar;
 @property NSView *toolbar;
 @property NSDictionary *layout;
@@ -171,7 +186,11 @@ static NSColor *color(NSString *name) {
   _chrome = material(host.bounds, [[FlippedView alloc] initWithFrame:host.bounds]);
   _chrome.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
   _chrome.accessibilityElement = NO;
-  [host addSubview:_chrome positioned:NSWindowBelow relativeTo:nil];
+  _chrome.wantsLayer = YES;
+  _chromeMask = [CAShapeLayer layer];
+  _chromeMask.fillRule = kCAFillRuleEvenOdd;
+  _chrome.layer.mask = _chromeMask;
+  [host addSubview:_chrome positioned:NSWindowAbove relativeTo:nil];
   FlippedView *side = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, sidebarWidth, height)];
   _sidebar = side;
   _sidebar.autoresizingMask = NSViewHeightSizable;
@@ -252,15 +271,33 @@ static NSColor *color(NSString *name) {
 }
 - (void)update:(NSDictionary *)snapshot {
   // Electron can reorder its hosting view when a WebContentsView becomes visible.
+  [_host addSubview:_chrome positioned:NSWindowAbove relativeTo:nil];
   [_host addSubview:_sidebar positioned:NSWindowAbove relativeTo:nil];
   [_host addSubview:_toolbar positioned:NSWindowAbove relativeTo:nil];
-  [_host addSubview:_chrome positioned:NSWindowBelow relativeTo:nil];
   _updating = YES;
   BOOL collapseChanged = _collapsed != [snapshot[@"sidebarCollapsed"] boolValue];
   _collapsed = [snapshot[@"sidebarCollapsed"] boolValue];
   CGFloat inset = [_layout[_collapsed ? @"railWidth" : @"sidebarWidth"] doubleValue];
   CGFloat toolbarHeight = [_layout[@"toolbarHeight"] doubleValue];
   CGFloat width = _host.bounds.size.width, height = _host.bounds.size.height;
+  // Cut out the full page area, retaining only its top-left curve. The native
+  // window owns the outer corners; no inset frame or remote-page CSS is needed.
+  CGFloat radius = [_layout[@"contentRadius"] doubleValue], top = height - toolbarHeight;
+  CGFloat tangent = radius * 0.5522847498;
+  CGMutablePathRef path = CGPathCreateMutable();
+  CGPathAddRect(path, nil, CGRectMake(0, 0, width, height));
+  CGPathMoveToPoint(path, nil, inset, 0);
+  CGPathAddLineToPoint(path, nil, width, 0);
+  CGPathAddLineToPoint(path, nil, width, top);
+  CGPathAddLineToPoint(path, nil, inset + radius, top);
+  CGPathAddCurveToPoint(path, nil, inset + radius - tangent, top, inset, top - radius + tangent, inset, top - radius);
+  CGPathCloseSubpath(path);
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
+  _chromeMask.frame = CGRectMake(0, 0, width, height);
+  _chromeMask.path = path;
+  [CATransaction commit];
+  CGPathRelease(path);
   _sidebar.frame = NSMakeRect(0, 0, inset, height);
   _toolbar.frame = NSMakeRect(0, height - toolbarHeight, width, toolbarHeight);
   CGFloat titleX = MAX(inset + 12, 128);
@@ -520,9 +557,9 @@ static napi_value attach(napi_env env, napi_callback_info info) {
   NSString *json = stringArgument(env, args[1]);
   NSDictionary *layout = json ? [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil] : nil;
   if (![layout isKindOfClass:NSDictionary.class]) { napi_throw_error(env, nullptr, "Native shell requires layout metrics"); return nullptr; }
-  for (NSString *key in @[@"sidebarWidth", @"railWidth", @"toolbarHeight", @"rowHeight"]) {
+  for (NSString *key in @[@"sidebarWidth", @"railWidth", @"toolbarHeight", @"rowHeight", @"contentRadius"]) {
     NSNumber *value = layout[key];
-    if (![value isKindOfClass:NSNumber.class] || !(value.doubleValue >= 24 && value.doubleValue <= 512)) { napi_throw_error(env, nullptr, "Invalid native layout metric"); return nullptr; }
+    if (![value isKindOfClass:NSNumber.class] || !(value.doubleValue >= ([key isEqual:@"contentRadius"] ? 0 : 24) && value.doubleValue <= 512)) { napi_throw_error(env, nullptr, "Invalid native layout metric"); return nullptr; }
   }
   [controller dispose];
   napi_threadsafe_function callback;

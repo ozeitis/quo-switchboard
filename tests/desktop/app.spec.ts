@@ -339,7 +339,7 @@ test('the native rail resizes retained views and keeps unread and call routing w
     return page;
   };
   const studio = await create('Studio');
-  await create('Workshop');
+  const workshop = await create('Workshop');
   const before = await snapshot();
   await studio.evaluate(() => { document.title = '(7) Quo fixture'; document.body.dataset.retained = 'yes'; });
   await command({ type: 'toggle-sidebar' });
@@ -353,7 +353,8 @@ test('the native rail resizes retained views and keeps unread and call routing w
     host.setContentSize(860, 580);
     return { size: host.getContentSize(), bounds: host.contentView.children.filter(view => view instanceof WebContentsView && view.webContents.getURL().startsWith('https://my.quo.com')).map(view => view.getBounds()) };
   });
-  expect(resized.bounds.every(bound => bound.x === 208 && bound.y === 52 && bound.width === resized.size[0]! - 216 && bound.height === resized.size[1]! - 60)).toBe(true);
+  expect(resized.bounds.every(bound => bound.x === 208 && bound.y === 52 && bound.width === resized.size[0]! - 208 && bound.height === resized.size[1]! - 52)).toBe(true);
+  await expect.poll(() => workshop.evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width: resized.size[0]! - 208, height: resized.size[1]! - 52 });
   await command({ type: 'toggle-sidebar' });
   await studio.evaluate(() => document.getElementById('ring')!.click());
   await expect.poll(async () => (await notifications()).length).toBeGreaterThan(0);
@@ -361,6 +362,7 @@ test('the native rail resizes retained views and keeps unread and call routing w
   await command({ type: 'new-workspace' });
   await application.evaluate(() => (globalThis as MainGlobal).notificationRecords.at(-1)!.notification.emit('click'));
   await expect.poll(async () => (await snapshot()).activeId).toBe(before.accounts[0]!.id);
+  await expect.poll(() => studio.evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width: resized.size[0]! - 56, height: resized.size[1]! - 52 });
   expect((await snapshot()).sidebarCollapsed).toBe(true);
   expect((await snapshot()).accounts[0]!.ringing).toBe(true);
   expect((await snapshot()).accounts).toHaveLength(2);

@@ -7,7 +7,7 @@ await mkdir('dist/renderer', { recursive: true });
 if (process.platform === 'darwin') {
   await mkdir('dist/native', { recursive: true });
   execFileSync('xcrun', ['clang++', '-std=c++20', '-fobjc-arc', '-O2', '-Wall', '-Wextra', '-Wno-unused-parameter',
-    '-shared', '-undefined', 'dynamic_lookup', '-framework', 'AppKit', '-I', 'node_modules/node-api-headers/include',
+    '-shared', '-undefined', 'dynamic_lookup', '-framework', 'AppKit', '-framework', 'QuartzCore', '-I', 'node_modules/node-api-headers/include',
     '-arch', 'arm64', '-arch', 'x86_64', '-mmacosx-version-min=13.0',
     'native/shell.mm', '-o', 'dist/native/shell.node'], { stdio: 'inherit' });
 }

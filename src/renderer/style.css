@@ -109,5 +109,5 @@ input[type="text"], input:not([type]) { width: 100%; background: var(--field); c
 body.native-shell .sidebar, body.native-shell .toolbar { visibility: hidden; pointer-events: none; }
 html.native-shell, body.native-shell { background: transparent; }
 html.native-shell { --accent: AccentColor; --text: CanvasText; --surface: Canvas; }
-body.native-shell .content { left: var(--native-sidebar-width); top: var(--native-toolbar-height); right: var(--native-content-gutter); bottom: var(--native-content-gutter); border-radius: var(--native-content-radius); }
+body.native-shell .content { left: var(--native-sidebar-width); top: var(--native-toolbar-height); right: 0; bottom: 0; border-radius: var(--native-content-radius) 0 0 0; }
 body.native-shell.sidebar-collapsed .content { left: var(--native-rail-width); }
