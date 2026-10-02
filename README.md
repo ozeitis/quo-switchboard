@@ -21,6 +21,7 @@ Switchboard gives each workspace its own saved browser session and keeps them ru
 - Choose a workspace palette, custom accent, and light/dark appearance in a native theme picker. Quo’s shared surfaces and menus inherit it.
 - Answer, decline, mute, hold, resume, or end from the popover when Quo exposes an unambiguous current control. Actions select their source workspace and reject stale calls.
 - Choose one microphone for every workspace. Native Settings reports availability per profile and provides a local input meter.
+- Apply Quo web updates across all workspaces with one bottom-left action, also available in the compact rail. Downloads keep call controls responsive. [Update behavior](docs/updates.md).
 - Keep workspaces running when the window closes.
 - Preserve browser profiles across restarts and app updates.
 - Choose private notification previews, launch at login, and workspace names and colors.
@@ -128,7 +129,7 @@ Development uses a separate `Switchboard Development` profile directory. Package
 | Idle recovery | Only failed pages retry, at most five attempts per fifteen minutes. Healthy or active calls are never reloaded merely because time passed. |
 | Health report | Local page-response samples every ten seconds. It does not establish provider-side message or call delivery. |
 | Memory | All added workspaces remain loaded; inactive ones are not hibernated. |
-| Updates | Download and replace the app manually. Profiles stay outside the app bundle. |
+| Updates | One sidebar action applies waiting Quo web updates across signed-in profiles. New Switchboard installers still require replacing the app; profiles stay outside its bundle. |
 | Quo API / webhooks | Not required or connected in this release. Public APIs do not replace Quo’s live call engine. |
 
 [Field-test checklist](docs/testing.md) · [Contributing](CONTRIBUTING.md)

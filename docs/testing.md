@@ -2,6 +2,12 @@
 
 ## Local validation — October 2, 2026
 
+Version 0.4.1 passes strict TypeScript checks, all 16 unit tests, and all 31 desktop tests. Three new cases use real Chromium service workers in two isolated profiles. One action checks a profile with no staged update, activates both workers, confirms page reloads, and retains workspace IDs, cookies, and local storage. An incoming call during downloading can be answered through the same native command path before downloading finishes; activation is deferred until the call ends and the shared action is retried. A failed script check activates neither worker, and a corrected retry succeeds.
+
+A controlled macOS 27 native preview confirms the update action at the bottom-left in expanded and compact sidebars. A physical click updates both fixture profiles from v1 to v2; both reload, retain their identities/storage, and remove the completed action. A subsequent copy-only refinement keeps progress text visible during the coordinator's own reloads rather than displaying the disconnected-workspace hint.
+
+Both 0.4.1 architecture bundles pass strict code-signature verification. Both DMGs and all four archive checksums verify. The package audit confirms the version, native module, expected security fuses, no test fixtures, and a matching CycloneDX dependency inventory. The Apple Silicon package restores both live signed-in workspaces after a normal quit of 0.3.1, preserving their IDs, active workspace, collapsed sidebar, and observed unread counts. Native Settings confirms the compact combined menu-bar layout and System Default microphone for both profiles. The live Workspace → Update all workspaces command completes without a visible error or pending-update action; activation of a new live Quo version was not observed. Future Quo compatibility, Intel execution, physical microphones, real calls, and the idle soak remain field checks.
+
 Version 0.4.0 passes strict TypeScript checks, all 16 unit tests, and all 28 desktop tests. The focused activity/call/audio/animation cases also pass. One earlier run stalled in test teardown after every assertion in the activity case passed. Teardown now performs the normal quit path with the isolated fixture's call guard confirmed; the complete rerun passes. A final microphone cleanup refinement passes the audio regression again.
 
 Both architecture bundles pass strict code-signature verification, both DMGs pass disk-image verification, and all four archive checksums verify. The package audit confirms version 0.4.0, the native module, no test fixtures, encrypted cookies, disabled Node/inspector entry points, and ASAR integrity. A CycloneDX dependency inventory accompanies the installers.
@@ -67,6 +73,7 @@ Desktop coverage includes:
 - Guarded popover call commands answer the originating workspace, operate mute/hold/resume/end, and reject stale tokens or another active call.
 - Shared microphone labels resolve to different device IDs in separate profiles, survive restart, preserve existing streams, and reject missing inputs. Local tests stop when switching workspaces and are blocked during captures.
 - Diagnostic calls exercise local controls and a notification Answer callback without invoking Quo call buttons or changing unread counts.
+- Actual service workers stage and activate independently in two profiles through one shared command; both pages reload without replacing local identities. A call during downloading remains answerable and blocks activation; failed checks retain the current workers and permit a retry.
 - Native menu-bar rows follow unread counts and call state, select the source workspace while the window is closed, and retain visibility/count preferences across restart. A partial count is labeled explicitly; desktop alert toggles do not hide unread activity.
 
 These tests do not certify native notification delivery, Quo’s actual call interface, or a provider’s session policy.
@@ -93,6 +100,7 @@ SWITCHBOARD_TEST_DATA=/tmp/switchboard-native-review npm start
 - Resize with Quo's own navigation visible; verify labels remain readable and the conversation controls fit. Test View → Use Mac Fonts and ⌘+ / ⌘− / ⌘0 across workspaces.
 - Right-click a disposable draft. Test spelling suggestions, Undo/Redo, Select All, and normal clipboard commands; Quo's own application menus must remain usable.
 - Open the menu-bar popover: verify account colors/counts, ringing priority, switching, recent-alert routing, current call controls, and Settings. Test separate/combined layouts and optional counts under Settings → General. Check notification tests and local call simulation under Diagnostics. Compare badge totals with Quo's visible unmuted inboxes; separately inspect muted/overflow direct messages and real macOS delivery.
+- Stage a Quo web update. Check the native bottom-left action in both sidebar modes; one click checks all ready profiles, reloads those with waiting updates, preserves sign-ins, and removes the action after completion. Check call/offline blocking, Answer during downloads, partial failure, and retry. This is separate from installing a Switchboard DMG.
 - Check light/dark appearance, Reduce Motion, Reduce Transparency, Increase Contrast, and VoiceOver on supported macOS versions.
 
 ## 24–48-hour idle acceptance

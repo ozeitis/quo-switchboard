@@ -95,6 +95,12 @@ function render(next: Snapshot): void {
   get('notification-error').hidden = !state.notificationError;
   get<HTMLButtonElement>('test-notification').disabled = !active || !state.preferences.notifications;
   get('app-version').textContent = `Switchboard ${state.version}`;
+  const updates = state.webUpdates;
+  const update = get<HTMLButtonElement>('update-workspaces');
+  update.hidden = !updates || (!updates.count && updates.phase === 'idle' && !updates.error);
+  update.disabled = !!updates && (updates.blocked || updates.phase !== 'idle');
+  update.textContent = updates?.phase === 'checking' ? 'Checking updates…' : updates?.phase === 'applying' ? 'Updating workspaces…' : 'Update all workspaces';
+  update.title = updates?.blocked ? 'Finish calls and reconnect first.' : updates?.error ?? 'Apply Quo web updates across every signed-in workspace.';
 }
 
 async function openDialog(dialog: HTMLDialogElement): Promise<void> {
@@ -164,6 +170,7 @@ get('add').addEventListener('click', () => openAccount());
 get('first-workspace').addEventListener('click', () => openAccount());
 get('settings').addEventListener('click', openSettings);
 for (const id of ['reload', 'retry']) get(id).addEventListener('click', () => { if (state.activeId) void run({ type: 'reload', id: state.activeId }); });
+get('update-workspaces').addEventListener('click', () => { void run({ type: 'update-workspaces' }); });
 get('test-notification').addEventListener('click', () => { if (state.activeId) void run({ type: 'test-notification', id: state.activeId }); });
 get('remove-workspace').addEventListener('click', () => { if (editing) void window.switchboard.command({ type: 'remove', id: editing }).then(() => accountDialog.close()).catch(() => { get('account-error').textContent = 'The workspace could not be removed.'; }); });
 get('project').addEventListener('click', () => { void run({ type: 'open-help' }); });

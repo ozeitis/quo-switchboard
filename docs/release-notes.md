@@ -1,3 +1,11 @@
+Switchboard for Quo 0.4.1 — one Quo update action for all workspaces.
+
+- A native bottom-left action appears when a Quo web update is waiting. The compact rail keeps it within reach; ⌘⇧U checks all workspaces at any time.
+- One click checks every signed-in profile before activating waiting workers. Existing profile IDs, cookies, and local storage remain intact.
+- Detected calls, microphone activity, and disconnected/loading workspaces block activation. Answer and End remain responsive during downloads. Failed or incomplete updates retain a retry state.
+
+This updates Quo web pages. Switchboard installer updates remain separate. [Details and compatibility boundaries](updates.md).
+
 Switchboard for Quo 0.4.0 — native activity and shared microphone controls.
 
 - A compact menu-bar icon opens a native popover with all workspaces, observed unread counts, current calls, and recent forwarded Quo alerts. Separate icons and counts remain optional.

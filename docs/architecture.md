@@ -21,7 +21,7 @@ flowchart TB
 
 `Accounts` retains one view per workspace. Switching changes selection and visibility. Each UUID selects an independent Chromium session, including cookies and website storage. Renaming, recoloring, and reordering never replace that UUID. A duplicate UUID in the settings file is rejected rather than silently sharing a login.
 
-The native bridge runs only in the main process. It owns AppKit views and sends small command objects through a Node-API thread-safe callback. It has no access to account cookies or page contents. Commands enter the same validated, serialized queue as local renderer commands. Workspace creation uses a native sheet: nothing is created until a valid name is submitted. Only one sheet can be open at a time. Native sheets do not hide or recreate the Quo view.
+The native bridge runs only in the main process. It owns AppKit views and sends small command objects through a Node-API thread-safe callback. It has no access to account cookies or page contents. Commands enter the same validated queue as local renderer commands. Shared web updates start in order, then run outside that queue so downloads cannot delay call controls. Workspace creation uses a native sheet: nothing is created until a valid name is submitted. Only one sheet can be open at a time. Native sheets do not hide or recreate the Quo view.
 
 The sidebar collapses from 208 to 56 points. The same retained browser views gain the extra space; workspace initials, unread badges, call indicators, context menus, and notifications remain available. The preference survives relaunch. A brief native fade respects Reduce Motion. Secondary actions live in the options and system menus rather than a permanent row of sidebar buttons. The 52-point toolbar spans the window, with a single workspace title and small SF Symbol controls that show their native border on hover. Connection and call status appear when relevant. Shared geometry in `src/shared/layout.ts` keeps AppKit, Chromium, and the local renderer aligned.
 
@@ -125,6 +125,8 @@ No relay, API key storage, server, or paid subscription is part of this release.
 | `src/preload/unread.ts` | Semantic unread badge observation and unavailable-state reporting |
 | `src/main/notifications.ts` | Native notifications, session-only activity, account-bound actions |
 | `src/main/calls.ts` | Guarded current-call commands and acknowledgements |
+| `src/main/web-updates.ts` | Shared update checks, call guards, source-bound results, reload confirmation |
+| `src/preload/web-updates.ts` | Exact Quo service-worker observation and guarded activation |
 | `src/preload/audio.ts` | Profile-local microphone resolution and local input tests |
 | `src/shared/audio.ts` | Validated shared microphone preferences and state |
 | `src/main/store.ts` | Validated settings persistence |

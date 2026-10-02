@@ -178,6 +178,8 @@ static NSImage *themePreview(NSDictionary *colors) {
 @property BOOL collapsed;
 @property NSButton *more;
 @property NSButton *add;
+@property NSButton *workspaceUpdate;
+@property NSTextField *updateNote;
 @property NSDictionary *snapshot;
 @property NSArray<NSDictionary *> *accounts;
 @property NSAlert *sheet;
@@ -259,6 +261,9 @@ static NSImage *themePreview(NSDictionary *colors) {
   _heading.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
   _heading.textColor = NSColor.secondaryLabelColor;
   [side addSubview:_heading];
+  _workspaceUpdate = [self button:@"Update all workspaces" symbol:@"arrow.down.circle" frame:NSZeroRect action:@selector(updateWorkspaces:) parent:side];
+  _workspaceUpdate.font = [NSFont systemFontOfSize:12]; _workspaceUpdate.contentTintColor = NSColor.controlAccentColor; _workspaceUpdate.hidden = YES;
+  _updateNote = label(@"", NSZeroRect, 10); _updateNote.textColor = NSColor.secondaryLabelColor; _updateNote.hidden = YES; [side addSubview:_updateNote];
   NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(8, toolbarHeight + 38, sidebarWidth - 16, MAX(100, height - toolbarHeight - 54))];
   _scroll = scroll;
   scroll.autoresizingMask = NSViewHeightSizable;
@@ -374,7 +379,21 @@ static NSImage *themePreview(NSDictionary *colors) {
   _title.frame = NSMakeRect(titleX, (toolbarHeight - 20) / 2, MAX(100, width - titleX - 104), 20);
   _heading.hidden = _collapsed;
   CGFloat listTop = toolbarHeight + (_collapsed ? 8 : 38);
-  _scroll.frame = NSMakeRect(8, listTop, inset - 16, MAX(100, height - listTop - 8));
+  NSDictionary *updates = snapshot[@"webUpdates"];
+  NSString *updatePhase = updates[@"phase"] ?: @"idle";
+  BOOL updating = ![updatePhase isEqual:@"idle"], available = [updates[@"count"] integerValue] > 0;
+  BOOL showUpdate = available || updating || [updates[@"error"] length];
+  CGFloat footer = showUpdate ? (_collapsed ? 52 : 68) : 0;
+  _workspaceUpdate.hidden = !showUpdate; _updateNote.hidden = !showUpdate || _collapsed;
+  _workspaceUpdate.frame = _collapsed ? NSMakeRect(12, height - 44, 32, 32) : NSMakeRect(10, height - 60, inset - 20, 30);
+  _workspaceUpdate.imagePosition = _collapsed ? NSImageOnly : NSImageLeading;
+  _workspaceUpdate.title = _collapsed ? @"" : [updatePhase isEqual:@"checking"] ? @"Checking updates…" : updating ? @"Updating workspaces…" : @"Update all workspaces";
+  _workspaceUpdate.enabled = !updating && ![updates[@"blocked"] boolValue];
+  _workspaceUpdate.accessibilityLabel = @"Update all workspaces";
+  _workspaceUpdate.toolTip = updating ? @"Checking and applying Quo web updates across all signed-in workspaces." : [updates[@"blocked"] boolValue] ? @"Finish calls and reconnect offline workspaces before updating." : updates[@"error"] ?: @"Check and apply Quo web updates across all signed-in workspaces (⌘⇧U).";
+  _updateNote.frame = NSMakeRect(16, height - 28, inset - 32, 16);
+  _updateNote.stringValue = updating ? @"Your saved sign-ins are kept" : [updates[@"blocked"] boolValue] ? @"Finish calls or reconnect first" : updates[@"error"] ? @"Update incomplete · try again" : [NSString stringWithFormat:@"%ld workspace%@ ready", [updates[@"count"] integerValue], [updates[@"count"] integerValue] == 1 ? @"" : @"s"];
+  _scroll.frame = NSMakeRect(8, listTop, inset - 16, MAX(100, height - listTop - 8 - footer));
   _table.tableColumns.firstObject.width = _scroll.contentSize.width;
   [_table sizeToFit];
   _collapse.accessibilityLabel = _collapsed ? @"Expand sidebar" : @"Collapse sidebar";
@@ -507,6 +526,7 @@ static NSImage *themePreview(NSDictionary *colors) {
   [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, _more.bounds.size.height + 4) inView:_more];
 }
 - (void)toggleSidebar:(id)sender { [self emit:@{@"type": @"toggle-sidebar"}]; }
+- (void)updateWorkspaces:(id)sender { [self emit:@{@"type":@"update-workspaces"}]; }
 - (void)addWorkspace:(id)sender { [self form:nil]; }
 - (BOOL)validName {
   NSString *value = [_nameField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];

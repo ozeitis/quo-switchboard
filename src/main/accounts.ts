@@ -13,6 +13,7 @@ export interface LiveAccount {
   ringId: string | null;
   recovery: RecoveryBudget;
   retry?: ReturnType<typeof setTimeout>;
+  navigationVersion: number;
 }
 
 export class Accounts {
@@ -43,7 +44,7 @@ export class Accounts {
       backgroundThrottling: false, spellcheck: true, autoplayPolicy: 'no-user-gesture-required'
     } });
     view.setBackgroundColor('#ffffff');
-    const entry: LiveAccount = { state: { ...account, status: 'loading', unread: 0, unreadKnown: false, ringing: false, inCall: false, callPhase: 'idle', muted: false, themeSupport: 'unmodified' }, view, ringId: null, recovery: new RecoveryBudget() };
+    const entry: LiveAccount = { state: { ...account, status: 'loading', unread: 0, unreadKnown: false, ringing: false, inCall: false, callPhase: 'idle', muted: false, themeSupport: 'unmodified' }, view, ringId: null, recovery: new RecoveryBudget(), navigationVersion: 0 };
     this.entries.set(account.id, entry);
     this.window.contentView.addChildView(view);
     const contents = view.webContents;
@@ -64,6 +65,7 @@ export class Accounts {
     contents.on('did-start-navigation', (_event, url, isInPlace, isMainFrame) => {
       // External links are canceled by the navigation guard; the current page stays alive.
       if (!isMainFrame || isInPlace || !accountNavigation(url)) return;
+      entry.navigationVersion++;
       this.reset(account.id);
       entry.ringId = null;
       entry.state.ringing = false;
@@ -71,6 +73,7 @@ export class Accounts {
       entry.state.callPhase = 'idle';
       entry.state.muted = false;
       entry.state.callId = undefined; entry.state.callActions = []; entry.state.audio = undefined;
+      entry.state.webUpdateId = undefined;
       entry.state.themeSupport = 'waiting';
       entry.state.status = 'loading';
       this.changed();
@@ -118,7 +121,8 @@ export class Accounts {
     entry.state.inCall = false;
     entry.state.callPhase = 'idle';
     entry.state.muted = false;
-      entry.state.callId = undefined; entry.state.callActions = []; entry.state.audio = undefined;
+    entry.state.callId = undefined; entry.state.callActions = []; entry.state.audio = undefined;
+    entry.state.webUpdateId = undefined;
     entry.state.themeSupport = 'waiting';
     this.changed();
     this.scheduleRecovery(entry);

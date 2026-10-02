@@ -10,6 +10,7 @@ Switchboard loads remote code from Quo. That code is necessary to use Quo, but i
 - Every shell IPC handler verifies the exact web contents, main frame, and local document URL.
 - The AppKit Node-API module loads only in the main process. Remote pages never receive its window handle, exports, or account-management callback. It uses public AppKit APIs.
 - Account events must come from that account’s main frame on `https://my.quo.com` or `https://my.openphone.com`. The main process supplies account identity; it ignores page-supplied identity.
+- Shared Quo web updates address only the root, same-origin `/sw.js` registration. Results must match the coordinator's request and originating profile. Activation uses Quo's existing worker message contract; it adds no executable source or credential access.
 - Notification data is length-limited, normalized, rate-limited, and inserted as text. No remote HTML is rendered in the shell.
 - Native permission handlers allow a narrow set of browser capabilities on exact Quo origins. Microphone requests also require macOS permission. Camera and arbitrary device permissions are denied in this release.
 - External URLs are restricted to HTTPS. File, JavaScript, custom executable protocols, and credential-bearing URLs are rejected.
@@ -31,7 +32,7 @@ The page adapter is not a security boundary against compromised Quo code: code a
 
 ## Releases
 
-Preview binaries are ad-hoc signed and are not notarized by Apple. That is not publisher identity verification. Verify release hashes and the source revision, or build from source. Automatic updates are intentionally absent until authenticated distribution is in place.
+Preview binaries are ad-hoc signed and are not notarized by Apple. That is not publisher identity verification. Verify release hashes and the source revision, or build from source. Automatic Switchboard binary updates are intentionally absent until authenticated distribution is in place. The shared Quo web-update action activates code already downloaded from each profile's Quo origin; it does not install a Switchboard binary.
 
 Ad-hoc previews retain hardened runtime with the library-validation exception required to load Electron's frameworks. This exception should be removed and re-tested when all nested code uses the same Developer ID identity.
 

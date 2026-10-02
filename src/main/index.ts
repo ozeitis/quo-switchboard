@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Accounts } from './accounts';
 import { Calls } from './calls';
+import { WebUpdates, validUpdateResult } from './web-updates';
 import { validAudio, validAudioState } from '../shared/audio';
 import { Notifications } from './notifications';
 import { appOrigin, cleanText, RateLimit } from './policy';
@@ -27,6 +28,7 @@ let store: Store;
 let accounts: Accounts;
 let notifications: Notifications;
 let calls: Calls;
+let webUpdates: WebUpdates;
 let testCall: Snapshot['testCall'];
 let testCallTimer: ReturnType<typeof setTimeout> | undefined;
 let menuBar: MenuBar;
@@ -70,6 +72,7 @@ function snapshot(): Snapshot {
     notificationError,
     audio: store.value.audio,
     activity: notifications?.activity() ?? [],
+    webUpdates: webUpdates?.state(),
     testCall,
     version: app.getVersion(),
     appearance: activeAppearance,
@@ -111,6 +114,7 @@ function intent(value: string): void {
 
 function publish(): void {
   if (!accounts || !store || !window || window.isDestroyed()) return;
+  webUpdates?.observe();
   layoutWorkspaces();
   const state = snapshot();
   nativeShell?.update(state);
@@ -150,7 +154,10 @@ function refreshMenus(): void {
       ...(nativeShell ? [{ label: 'Edit workspace…', enabled: !!store.value.activeId, click: () => { if (store.value.activeId) { show(); nativeShell?.form(store.value.activeId); } } }] : []),
       { label: 'Workspace theme…', enabled: !!store.value.activeId, click: () => { if (store.value.activeId) void command({ type: 'workspace-theme', id: store.value.activeId }); } },
       { type: 'separator' }, ...workspaceItems,
-      { type: 'separator' }, { label: 'Reload workspace', accelerator: 'CommandOrControl+R', enabled: !!store.value.activeId, click: () => { if (store.value.activeId) void accounts.reload(store.value.activeId); } }
+      { type: 'separator' }, { label: 'Reload workspace', accelerator: 'CommandOrControl+R', enabled: !!store.value.activeId, click: () => { if (store.value.activeId) void accounts.reload(store.value.activeId); } },
+      { label: 'Update all workspaces', accelerator: 'CommandOrControl+Shift+U', enabled: !!active && !webUpdates?.state().blocked && webUpdates?.state().phase === 'idle', click: () => {
+        void command({ type: 'update-workspaces' }).catch(() => { void dialog.showMessageBox(window, { type: 'info', message: 'Workspaces could not update.', detail: 'Finish calls and reconnect offline workspaces, then try again.' }); });
+      } }
     ] },
     { role: 'editMenu' },
     { label: 'View', submenu: [
@@ -227,6 +234,7 @@ async function command(value: unknown): Promise<void> {
     case 'show': show(); break;
     case 'quit': app.quit(); break;
     case 'activity': menuBar.open(); break;
+    case 'update-workspaces': await webUpdates.apply(); break;
     case 'open-activity': if (validId(cmd.id)) notifications.openActivity(cmd.id); break;
     case 'call-action': {
       if (!validId(cmd.id) || !validId(cmd.callId) || !CALL_ACTIONS.includes(cmd.action)) break;
@@ -378,6 +386,7 @@ if (gotLock) void app.whenReady().then(async () => {
   accounts = new Accounts(window, publish, id => notifications?.reset(id), health, appearance, () => store.value.audio);
   notifications = new Notifications(window, accounts, () => store.value.preferences, select, () => { notificationError = true; publish(); }, publish);
   calls = new Calls(accounts.entries, select);
+  webUpdates = new WebUpdates(accounts.entries, publish);
   ipcMain.handle('account:audio-policy', event => {
     const entry = [...accounts.entries.values()].find(entry => entry.view.webContents === event.sender);
     if (!entry || event.senderFrame !== event.sender.mainFrame || !appOrigin(event.senderFrame.url)) throw new Error('Untrusted sender');
@@ -388,7 +397,8 @@ if (gotLock) void app.whenReady().then(async () => {
   let commands = Promise.resolve();
   const enqueue = (value: unknown): Promise<void> => {
     const result = commands.then(() => command(value));
-    commands = result.catch(() => undefined);
+    // Downloads must not hold the command queue while a caller needs Answer or End.
+    if (!value || typeof value !== 'object' || (value as ShellCommand).type !== 'update-workspaces') commands = result.catch(() => undefined);
     return result;
   };
   ipcMain.handle('shell:command', (event, value: unknown) => {
@@ -407,6 +417,10 @@ if (gotLock) void app.whenReady().then(async () => {
     const data = raw as Record<string, unknown>;
     const accountId = entry.state.id;
     switch (data.type) {
+      case 'web-update-state':
+        if (data.updateId === null || validId(data.updateId)) { entry.state.webUpdateId = data.updateId ?? undefined; publish(); }
+        break;
+      case 'web-update-result': if (validId(data.requestId) && validUpdateResult(data.result)) webUpdates.complete(accountId, data.requestId, data.result); break;
       case 'call-action-result': if (validId(data.requestId) && typeof data.clicked === 'boolean') calls.complete(accountId, data.requestId, data.clicked); break;
       case 'audio-state': if (validAudioState(data.audio)) { entry.state.audio = data.audio; publish(); } break;
       case 'heartbeat': health.heartbeat(accountId); break;
@@ -491,7 +505,7 @@ app.on('before-quit', event => {
 async function shutdown(): Promise<void> {
   if (shutdownStarted) return;
   shutdownStarted = true;
-  clearInterval(healthTimer); clearTimeout(testCallTimer); calls?.dispose();
+  clearInterval(healthTimer); clearTimeout(testCallTimer); calls?.dispose(); webUpdates?.dispose();
   nativeShell?.dispose();
   notifications?.closeAll();
   await accounts?.close();

@@ -21,6 +21,9 @@ app.on('web-contents-created', (_event, contents) => {
   if (handled.has(profile)) return;
   handled.add(profile);
   profile.protocol.handle('https', request => {
+    if (process.env.SWITCHBOARD_TEST_WORKER && new URL(request.url).pathname === '/sw.js') {
+      return new Response(readFileSync(process.env.SWITCHBOARD_TEST_WORKER, 'utf8'), { headers: { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' } });
+    }
     const body = new URL(request.url).origin === 'https://signin.openphone.com'
       ? '<!doctype html><h1>Quo sign-in fixture</h1><a href="https://my.quo.com/auth/authorize?code=fixture">Complete sign-in</a>'
       : html;

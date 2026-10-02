@@ -43,7 +43,9 @@ export interface AccountState extends Account {
   callId?: string;
   callActions?: CallAction[];
   audio?: AudioState;
+  webUpdateId?: string;
 }
+export interface WebUpdateState { count: number; phase: 'idle' | 'checking' | 'applying'; blocked: boolean; error?: string }
 export interface Snapshot {
   nativeShell?: boolean;
   sidebarCollapsed?: boolean;
@@ -55,6 +57,7 @@ export interface Snapshot {
   version: string;
   audio?: AudioPreferences;
   activity?: ActivityItem[];
+  webUpdates?: WebUpdateState;
   testCall?: { id: string; workspaceId: string; phase: CallPhase; muted: boolean };
   appearance?: AppearanceOptions;
   themeCatalog?: { id: string; name: string; colors: AppearanceOptions['resolved']['colors'] }[];
@@ -71,7 +74,7 @@ export type ShellCommand =
   | { type: 'open-activity'; id: string }
   | { type: 'test-call'; id: string }
   | { type: 'test-call-action'; callId: string; action: CallAction }
-  | { type: 'audio-refresh' | 'audio-test' | 'audio-stop' | 'activity' | 'show' | 'quit' }
+  | { type: 'audio-refresh' | 'audio-test' | 'audio-stop' | 'activity' | 'show' | 'quit' | 'update-workspaces' }
   | { type: 'overlay'; open: boolean }
   | { type: 'workspace-theme'; id: string }
   | { type: 'preview-theme' | 'save-theme'; id: string; theme: WorkspaceTheme }
@@ -80,6 +83,8 @@ export type ShellCommand =
   | { type: 'open-help' | 'new-workspace' | 'settings' | 'health' | 'workspace-limit' | 'toggle-sidebar' | 'toggle-appearance' | 'zoom-in' | 'zoom-out' | 'reset-zoom' };
 export type AccountEvent =
   | { type: 'heartbeat' }
+  | { type: 'web-update-state'; updateId: string | null }
+  | { type: 'web-update-result'; requestId: string; result: 'ready' | 'current' | 'applied' | 'busy' | 'unsupported' | 'error' | 'stale' }
   | { type: 'audio-state'; audio: AudioState }
   | { type: 'notification'; id: string; title: string; body: string; tag: string; silent: boolean }
   | { type: 'notification-close'; id: string }

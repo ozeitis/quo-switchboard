@@ -46,10 +46,10 @@ let application: ElectronApplication;
 let window: Page;
 let dataDirectory: string;
 
-async function launch(directory: string, restoring = false, native = false, html = fixture): Promise<void> {
+async function launch(directory: string, restoring = false, native = false, html = fixture, worker?: string): Promise<void> {
   const fixturePath = join(directory, 'fixture.html');
   await writeFile(fixturePath, html, { mode: 0o600 });
-  application = await _electron.launch({ args: [resolve('tests/desktop/bootstrap.cjs'), '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'], env: { ...process.env, SWITCHBOARD_TEST_DATA: directory, SWITCHBOARD_TEST_FIXTURE: fixturePath, SWITCHBOARD_TEST_SHELL: native ? 'native' : 'html' } });
+  application = await _electron.launch({ args: [resolve('tests/desktop/bootstrap.cjs'), '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'], env: { ...process.env, SWITCHBOARD_TEST_DATA: directory, SWITCHBOARD_TEST_FIXTURE: fixturePath, SWITCHBOARD_TEST_WORKER: worker ?? '', SWITCHBOARD_TEST_SHELL: native ? 'native' : 'html' } });
   window = await application.firstWindow();
   if (!restoring) await expect(window.getByRole('button', { name: 'Add your first workspace' })).toBeVisible();
   // DOM visibility does not establish that Electron finished showing the window.
@@ -801,4 +801,88 @@ test('diagnostic calls are labeled simulations, exercise controls, and never mod
   await shellCommand({ type: 'test-call-action', callId, action: 'resume' }); expect((await stateSnapshot()).testCall!.phase).toBe('active');
   await shellCommand({ type: 'test-call-action', callId, action: 'end' }); expect((await stateSnapshot()).testCall).toBeUndefined();
   expect(await page.evaluate(() => document.body.dataset.answered)).toBeUndefined();
+});
+
+const updateFixture = fixture.replace('</script>', `
+let controlled = !!navigator.serviceWorker.controller;
+navigator.serviceWorker.addEventListener('controllerchange', () => { if (controlled) location.reload(); else controlled = true; });
+navigator.serviceWorker.register('/sw.js');
+</script>`);
+const workerSource = (version: string, delay = 0) => `
+const version = '${version}';
+self.addEventListener('install', event => event.waitUntil(new Promise(resolve => setTimeout(resolve, ${delay}))));
+self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+self.addEventListener('message', event => { if (event.data.type === 'SKIP_WAITING') self.skipWaiting(); else if (event.data.type === 'VERSION') event.ports[0].postMessage(version); });
+`;
+const workerVersion = (page: Page) => page.evaluate(() => new Promise<string>((resolve, reject) => {
+  if (!navigator.serviceWorker.controller) { reject(new Error('No controlling worker')); return; }
+  const channel = new MessageChannel(); const timer = setTimeout(() => reject(new Error('Worker did not respond')), 2000);
+  channel.port1.onmessage = event => { clearTimeout(timer); channel.port1.close(); resolve(event.data); };
+  navigator.serviceWorker.controller.postMessage({ type: 'VERSION' }, [channel.port2]);
+}));
+async function updateAccounts(): Promise<{ studio: Page; workshop: Page; worker: string }> {
+  await application.close(); const worker = join(dataDirectory, 'sw.js'); await writeFile(worker, workerSource('v1'));
+  await launch(dataDirectory, false, true, updateFixture, worker);
+  const studio = await addNative('Studio'), workshop = await addNative('Workshop');
+  for (const page of [studio, workshop]) await expect.poll(() => workerVersion(page).catch(() => 'pending')).toBe('v1');
+  return { studio, workshop, worker };
+}
+
+test('one update action checks every profile, activates its waiting worker, reloads both pages, and preserves identities', async () => {
+  const { studio, workshop, worker } = await updateAccounts();
+  const before = (await stateSnapshot()).accounts.map(account => account.id);
+  await studio.evaluate(() => { localStorage.setItem('identity', 'studio'); document.cookie = 'identity=studio; Secure; SameSite=Lax'; });
+  await workshop.evaluate(() => { localStorage.setItem('identity', 'workshop'); document.cookie = 'identity=workshop; Secure; SameSite=Lax'; });
+  await writeFile(worker, workerSource('v2'));
+  await studio.evaluate(async () => { await (await navigator.serviceWorker.getRegistration())!.update(); });
+  await expect.poll(async () => (await stateSnapshot()).webUpdates?.count).toBe(1);
+  expect(await workerVersion(workshop)).toBe('v1');
+  await shellCommand({ type: 'update-workspaces' });
+  for (const [page, identity] of [[studio, 'studio'], [workshop, 'workshop']] as const) {
+    await expect.poll(() => workerVersion(page).catch(() => 'pending')).toBe('v2');
+    expect(await page.evaluate(() => localStorage.getItem('identity'))).toBe(identity);
+    expect(await page.evaluate(() => document.cookie)).toContain(`identity=${identity}`);
+  }
+  const after = await stateSnapshot(); expect(after.accounts.map(account => account.id)).toEqual(before);
+  expect(after.webUpdates).toMatchObject({ count: 0, phase: 'idle', blocked: false }); expect(after.webUpdates?.error).toBeUndefined();
+});
+
+test('a call arriving during update checks prevents activation in every workspace until the shared action is retried', async () => {
+  const { studio, workshop, worker } = await updateAccounts();
+  await writeFile(worker, workerSource('v2', 5000));
+  let finished = false;
+  const updating = shellCommand({ type: 'update-workspaces' }).then(() => { finished = true; });
+  await expect.poll(async () => (await stateSnapshot()).webUpdates?.phase).toBe('checking');
+  await workshop.evaluate(() => document.getElementById('ring')!.click());
+  await expect.poll(async () => (await stateSnapshot()).webUpdates?.blocked).toBe(true);
+  const ringing = (await stateSnapshot()).accounts[1]!;
+  await shellCommand({ type: 'call-action', id: ringing.id, callId: ringing.callId, action: 'answer' });
+  await expect.poll(async () => (await stateSnapshot()).accounts[1]!.inCall).toBe(true);
+  expect(finished).toBe(false);
+  expect((await stateSnapshot()).webUpdates?.phase).toBe('checking');
+  await updating;
+  expect((await stateSnapshot()).webUpdates?.error).toContain('paused');
+  for (const page of [studio, workshop]) expect(await workerVersion(page)).toBe('v1');
+  await expect(shellCommand({ type: 'update-workspaces' })).rejects.toThrow('Finish calls');
+  const active = (await stateSnapshot()).accounts[1]!;
+  await shellCommand({ type: 'call-action', id: active.id, callId: active.callId, action: 'end' });
+  await expect.poll(async () => (await stateSnapshot()).webUpdates?.blocked).toBe(false);
+  await shellCommand({ type: 'update-workspaces' });
+  for (const page of [studio, workshop]) await expect.poll(() => workerVersion(page).catch(() => 'pending')).toBe('v2');
+  expect((await stateSnapshot()).webUpdates?.error).toBeUndefined();
+});
+
+test('a failed update check preserves both controlling workers and a retry completes the shared update', async () => {
+  const { studio, workshop, worker } = await updateAccounts();
+  await writeFile(worker, workerSource('v2'));
+  await studio.evaluate(async () => { await (await navigator.serviceWorker.getRegistration())!.update(); });
+  await expect.poll(async () => (await stateSnapshot()).webUpdates?.count).toBe(1);
+  await writeFile(worker, 'This is not valid JavaScript!');
+  await shellCommand({ type: 'update-workspaces' });
+  expect((await stateSnapshot()).webUpdates?.error).toContain('Could not check every workspace');
+  for (const page of [studio, workshop]) expect(await workerVersion(page)).toBe('v1');
+  await writeFile(worker, workerSource('v2'));
+  await shellCommand({ type: 'update-workspaces' });
+  for (const page of [studio, workshop]) await expect.poll(() => workerVersion(page).catch(() => 'pending')).toBe('v2');
+  expect((await stateSnapshot()).webUpdates?.error).toBeUndefined();
 });

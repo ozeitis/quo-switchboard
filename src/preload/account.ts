@@ -4,11 +4,13 @@ import { appOrigin } from '../main/policy';
 import { findAnswerButton, hasActiveCall, readCallState, callButtons } from './call-controls';
 import { DesktopAppearance } from './appearance';
 import { installAudio } from './audio';
+import { installWebUpdates } from './web-updates';
 import { UnreadCounter } from './unread';
 
 // This preload never receives account credentials or exposes Electron APIs to Quo.
 if (appOrigin(location.href) && process.isMainFrame) {
   installAudio();
+  installWebUpdates();
   const send = (event: AccountEvent) => ipcRenderer.send('account:event', event);
   const appearance = process.platform === 'darwin' ? new DesktopAppearance() : undefined;
   ipcRenderer.on('account:appearance', (_event, options: import('../shared/theme').AppearanceOptions) => {
