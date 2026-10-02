@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { AccountEvent } from '../shared/model';
 import { appOrigin } from '../main/policy';
-import { findAnswerButton, hasActiveCall } from './call-controls';
+import { findAnswerButton, hasActiveCall, readCallState } from './call-controls';
 import { DesktopAppearance } from './appearance';
 import { UnreadCounter } from './unread';
 
@@ -9,8 +9,8 @@ import { UnreadCounter } from './unread';
 if (appOrigin(location.href) && process.isMainFrame) {
   const send = (event: AccountEvent) => ipcRenderer.send('account:event', event);
   const appearance = process.platform === 'darwin' ? new DesktopAppearance() : undefined;
-  ipcRenderer.on('account:appearance', (_event, enabled: boolean) => {
-    if (typeof enabled === 'boolean') appearance?.setEnabled(enabled);
+  ipcRenderer.on('account:appearance', (_event, options: import('../shared/theme').AppearanceOptions) => {
+    if (options && typeof options === 'object') { appearance?.configure(options); update(); }
   });
 
   window.addEventListener('switchboard:notification', event => {
@@ -107,7 +107,7 @@ if (appOrigin(location.href) && process.isMainFrame) {
     const state: AccountEvent = {
       type: 'state', status: !navigator.onLine ? 'offline' : signIn ? 'sign-in' : 'ready',
       ...(signIn ? { unread: 0, unreadKnown: false } : unread.read(document)),
-      inCall: hasActiveCall(document)
+      ...readCallState(document), themeSupport: appearance?.support ?? 'unmodified'
     };
     const encoded = JSON.stringify(state);
     if (encoded !== lastState) { lastState = encoded; send(state); }
@@ -122,7 +122,7 @@ if (appOrigin(location.href) && process.isMainFrame) {
   });
   window.addEventListener('online', update);
   window.addEventListener('offline', update);
-  const heartbeat = () => { update(); send({ type: 'heartbeat' }); };
+  const heartbeat = () => { appearance?.invalidate(); update(); send({ type: 'heartbeat' }); };
   ipcRenderer.on('account:probe', heartbeat);
   window.addEventListener('DOMContentLoaded', () => {
     let pending = false;
@@ -130,7 +130,9 @@ if (appOrigin(location.href) && process.isMainFrame) {
       if (pending) return;
       pending = true;
       setTimeout(() => { pending = false; update(); }, 180);
-    }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-label', 'disabled', 'aria-disabled', 'style', 'class'], characterData: true });
+    }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-label', 'disabled', 'aria-disabled', 'aria-pressed', 'style', 'class'], characterData: true });
+    new MutationObserver(() => { appearance?.invalidate(); update(); }).observe(document.head, { subtree: true, childList: true, characterData: true });
+    document.addEventListener('load', event => { if (event.target instanceof HTMLLinkElement) { appearance?.invalidate(); update(); } }, true);
     heartbeat();
     setInterval(heartbeat, 10_000);
   });

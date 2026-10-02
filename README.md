@@ -16,7 +16,9 @@ Switchboard gives each workspace its own saved browser session and keeps them ru
 - Switch with the sidebar, menu bar, or **⌘1–9**.
 - Collapse the sidebar to an icon rail with **⌘⇧L**. Unread counts and call indicators stay visible.
 - See which workspace sent a desktop notification. Click to open that workspace.
-- See unread activity on every workspace badge and in a compact menu-bar total. Open the native menu for colored workspace initials, counts, call state, and notification controls.
+- Give each workspace its own menu-bar icon and unread count. Settings also offers one combined icon.
+- See incoming, active, held, and other observable call states in the rail and menu bar. Incoming calls pulse gently; Reduce Motion stops animation.
+- Choose a workspace palette, custom accent, and light/dark appearance in a native theme picker. Quo’s shared surfaces and menus inherit it.
 - Keep workspaces running when the window closes.
 - Preserve browser profiles across restarts and app updates.
 - Choose private notification previews, launch at login, and workspace names and colors.
@@ -48,12 +50,13 @@ Every workspace gets a persistent Chromium session and a retained `WebContentsVi
 | Desktop runtime | Electron 44.5.1 / Chromium | Isolated profiles, background views, browser media support |
 | Application code | TypeScript 7.0.2 | Strict types across account state and process boundaries |
 | Workspace controls | AppKit / Objective-C++ / Node-API | Native tables, sheets, menus, SF Symbols, semantic colors and glass |
+| Theme colors | Color.js 0.7.1 / OKLCH | Perceptual palettes, gamut mapping, measured contrast |
 | Content shell | HTML / CSS / TypeScript | Welcome and failure states; Quo supplies its own interface |
 | Mac integration | Public AppKit and Electron APIs | Native window, menus, tray, notifications and power behavior |
 | Build | esbuild 0.28.2 / electron-builder 26.15.3 | Bundled app, Apple Silicon and Intel DMGs |
 | Verification | Node tests / Playwright 1.63.0 | Security boundaries and actual desktop behavior |
 
-The sidebar, toolbar, and workspace/settings sheets are native AppKit. macOS 26 and 27 supply Liquid Glass through `NSGlassEffectView` and native glass buttons; older supported systems use native vibrancy. System appearance, accent colors, and accessibility preferences drive the controls. Quo’s conversation interface remains Quo’s web app. A small presentation adapter stabilizes its sidebar and uses Mac fonts while preserving dyslexia, code, and emoji fonts. **View → Use Mac Fonts** restores Quo's typography when unchecked. See [architecture and extension points](docs/architecture.md).
+The sidebar, toolbar, and workspace/settings sheets are native AppKit. macOS 26 and 27 supply Liquid Glass through `NSGlassEffectView` and native glass buttons; older supported systems use native vibrancy. System appearance, accent colors, and accessibility preferences drive the controls. Quo’s conversation interface remains Quo’s web app. A small presentation adapter stabilizes its sidebar and uses Mac fonts while preserving dyslexia, code, and emoji fonts. **View → Use Mac Fonts** restores Quo's typography when unchecked. The native theme picker previews each workspace independently. Apply saves; Cancel restores. See [themes and compatibility](docs/themes.md) and [architecture](docs/architecture.md).
 
 ## Install
 
@@ -112,6 +115,7 @@ Development uses a separate `Switchboard Development` profile directory. Package
 | Login renewal | Quo owns it. No promise of permanent sign-in. |
 | Google / SSO | Embedded login can be refused; browser login does not automatically transfer into the app. Email login is the first path to test. |
 | Notifications | Page-created notifications are forwarded. Service-worker notifications are not rewritten by the adapter. |
+| Themes | Verified against Quo’s current color contract. Unknown contracts restore original colors; provider changes need review. |
 | Call detection | Based on visible, English-language accessible controls. Quo UI changes or other locales may require adapter updates. |
 | Connection status | “Workspace loaded” means the page loaded, not that Quo has confirmed its calling transport. |
 | Idle recovery | Only failed pages retry, at most five attempts per fifteen minutes. Healthy or active calls are never reloaded merely because time passed. |

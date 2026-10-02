@@ -1,6 +1,6 @@
 {
   "name": "quo-switchboard",
-  "version": "0.2.5",
+  "version": "0.3.1",
   "description": "A Mac home for your Quo workspaces.",
   "private": true,
   "main": "dist/main.cjs",
@@ -25,6 +25,7 @@
   "devDependencies": {
     "@playwright/test": "1.63.0",
     "@types/node": "26.6.3",
+    "colorjs.io": "0.7.1",
     "electron": "44.5.1",
     "electron-builder": "26.15.3",
     "esbuild": "0.28.2",

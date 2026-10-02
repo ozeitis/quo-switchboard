@@ -57,6 +57,8 @@
       <label class="setting"><span><strong>Show in menu bar</strong><small>Quick access to every workspace and its unread activity.</small></span><input name="showMenuBar" type="checkbox" role="switch"></label>
       <label class="setting"><span><strong>Show unread count in menu bar</strong><small>A compact total beside the Switchboard icon.</small></span><input name="menuBarCount" type="checkbox" role="switch"></label>
       <label class="setting"><span><strong>Answer from notifications <span class="experimental">Experimental</span></strong><small>Uses Quo’s visible answer control. May stop working when Quo changes. Leave off until tested with your accounts.</small></span><input name="experimentalAnswer" type="checkbox" role="switch"></label>
+      <label>Menu bar layout <select name="menuBarLayout"><option value="separate">One icon per workspace</option><option value="combined">One combined icon</option></select></label>
+      <label class="setting"><input type="checkbox" role="switch" name="animateActivity">Animate call activity</label>
       <div class="settings-note">Closing the window keeps workspaces running. Quitting stops them. Quo may still require you to sign in again when a session expires.</div>
       <div class="settings-note">macOS can silence notification banners during Focus or screen sharing. Check System Settings → Notifications if a test alert does not appear.</div>
       <p id="notification-error" class="error-text" role="alert" hidden>macOS could not show a notification. Use the packaged app and check System Settings → Notifications → Switchboard.</p>

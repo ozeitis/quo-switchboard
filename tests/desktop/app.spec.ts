@@ -3,9 +3,11 @@ import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { Menu as NativeMenu, Notification as NativeNotification, Tray as NativeTray, NativeImage } from 'electron';
+import { QUO_LIGHT, QUO_DARK } from '../../src/preload/theme-contract';
+import { channels } from '../../src/shared/theme';
 
 interface NativeRecord { notification: NativeNotification; title: string; body: string; subtitle: string; actions: string[] }
-type MainGlobal = typeof globalThis & { notificationRecords: NativeRecord[]; externalOrigins: string[]; textMenus: { menu: NativeMenu; frameURL?: string }[]; trayMenus: { menu: NativeMenu; tray: NativeTray }[]; trayImages: WeakMap<NativeTray, NativeImage> };
+type MainGlobal = typeof globalThis & { notificationRecords: NativeRecord[]; externalOrigins: string[]; textMenus: { menu: NativeMenu; frameURL?: string }[]; trayMenus: { menu: NativeMenu; tray: NativeTray }[]; trayImages: WeakMap<NativeTray, NativeImage>; fixtureReduceMotion?: boolean };
 
 const fixture = `<!doctype html><html><head><title>Quo fixture</title></head><body>
 <h1>Quo test workspace</h1><button id="notify">Send notification</button><button id="ring">Simulate incoming call</button>
@@ -508,6 +510,7 @@ test('Quo sidebar badges drive account counts without title double-counting, hov
 test('the native menu bar reports each account, routes calls with the window closed, and preserves display preferences', async () => {
   await application.close();
   await launch(dataDirectory, false, true, unreadFixture);
+  await shellCommand({ type: 'preferences', preferences: { ...(await window.evaluate(() => (window as unknown as { switchboard: { snapshot(): Promise<import('../../src/shared/model').Snapshot> } }).switchboard.snapshot())).preferences, menuBarLayout: 'combined' } });
   const studio = await addNative('Studio');
   const workshop = await addNative('Workshop');
   const config = JSON.parse(await readFile(join(dataDirectory, 'workspaces.json'), 'utf8'));
@@ -563,4 +566,177 @@ test('the native menu bar reports each account, routes calls with the window clo
   const restored = JSON.parse(await readFile(join(dataDirectory, 'workspaces.json'), 'utf8'));
   expect(restored.preferences).toMatchObject({ showMenuBar: true, menuBarCount: false, notifications: false });
   expect(restored.accounts.map((account: { id: string }) => account.id)).toEqual(config.accounts.map((account: { id: string }) => account.id));
+});
+
+const stateSnapshot = () => window.evaluate(() => (window as unknown as { switchboard: { snapshot(): Promise<import('../../src/shared/model').Snapshot> } }).switchboard.snapshot());
+const themePrefix = '--fixture-color-';
+const themeFixture = unreadFixture.replace('<head>', `<head><style id="verified-contract">
+.provider-light { ${QUO_LIGHT.map((value, i) => `${themePrefix}${i.toString(36)}:${value};`).join('')} }
+.provider-dark { ${QUO_DARK.map((value, i) => `${themePrefix}${i.toString(36)}:${value};`).join('')} }
+body { background:rgb(var(${themePrefix}e)); color:rgb(var(${themePrefix}8)); }
+#sideMenu { background:rgb(var(${themePrefix}i)); }
+.surface { background:rgb(var(${themePrefix}e)); color:rgb(var(${themePrefix}8)); }
+.portal-menu { background:rgb(var(${themePrefix}f)); color:rgb(var(${themePrefix}9)); border:1px solid rgb(var(${themePrefix}b)); }
+.accent-link { color:rgb(var(${themePrefix}0)); }
+.solid-button { background:rgb(var(${themePrefix}0)); color:rgb(var(${themePrefix}26)); }
+.solid-button:hover { background:rgb(var(${themePrefix}1)); }
+.solid-button:active { background:rgb(var(${themePrefix}2)); }
+.call-surface { background:rgb(var(${themePrefix}28)); color:rgb(var(${themePrefix}26)); }
+.semantic-danger { color:rgb(var(${themePrefix}15)); }
+.bn-container { --bn-colors-menu-background:#abcdef; }
+.editor-menu { background:var(--bn-colors-menu-background); color:var(--bn-colors-menu-text); }
+@media(min-width:99999px) { .accent-link { color:red; } }
+</style>`).replace('<body>', '<body class="provider-light">')
+  .replace('<textarea', '<div class="surface">Conversation</div><a class="accent-link">Compose</a><button class="solid-button">Primary action</button><div class="semantic-danger">Warning</div><div class="call-surface">Call panel</div><div class="bn-container"><div class="editor-menu">Editor menu</div></div><textarea')
+  .replace('<div id="call">', '<div id="call" role="dialog" aria-label="Call controls">');
+
+const computed = (page: Page, selector: string, property: 'backgroundColor' | 'color' | 'borderTopColor' = 'backgroundColor') => page.locator(selector).evaluate((element, property) => getComputedStyle(element)[property], property);
+const rgb = (hex: string) => `rgb(${channels(hex)})`;
+
+test('workspace themes cover portal and editor menus, separate solid and text accents, and restore on cancellation', async () => {
+  await application.close(); await launch(dataDirectory, false, true, themeFixture);
+  const studio = await addNative('Studio'); const workshop = await addNative('Workshop');
+  const ids = (await stateSnapshot()).accounts.map(account => account.id);
+  await shellCommand({ type: 'select', id: ids[0] });
+  await studio.evaluate(() => {
+    const menu = document.createElement('div'); menu.className = 'provider-light portal-menu'; menu.textContent = 'Portal menu'; document.body.append(menu);
+    document.body.dataset.retained = 'yes'; localStorage.setItem('fixture-session', 'retained');
+  });
+  const original = await computed(studio, '.surface'); const otherOriginal = await computed(workshop, '.surface');
+  await shellCommand({ type: 'preview-theme', id: ids[0], theme: { preset: 'iris', mode: 'dark' } });
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]?.themeSupport).toBe('compatible');
+  let colors = (await stateSnapshot()).appearance!.resolved.colors;
+  for (const [selector, property, value] of [['.surface','backgroundColor',colors.surface], ['#sideMenu','backgroundColor',colors.sidebar], ['.portal-menu','backgroundColor',colors.elevated], ['.portal-menu','color',colors.secondary], ['.editor-menu','backgroundColor',colors.elevated], ['.accent-link','color',colors.accentText], ['.solid-button','backgroundColor',colors.accent], ['.solid-button','color',colors.onAccent], ['.call-surface','backgroundColor',colors.callBackground]] as const) {
+    await expect.poll(() => computed(studio, selector, property)).toBe(rgb(value));
+  }
+  await studio.locator('.solid-button').hover();
+  await expect.poll(() => computed(studio, '.solid-button')).toBe(rgb(colors.accentHover));
+  await studio.mouse.down();
+  await expect.poll(() => computed(studio, '.solid-button')).toBe(rgb(colors.accentPressed));
+  await studio.mouse.up();
+  await studio.locator('.surface').hover();
+  expect(await computed(workshop, '.surface')).toBe(otherOriginal);
+  expect(await computed(studio, '.semantic-danger', 'color')).toBe(`rgb(${QUO_DARK[parseInt('15',36)]})`);
+  expect(await studio.getByRole('textbox', { name: 'Draft' }).inputValue()).toBe('Fixture draft');
+  expect(await studio.evaluate(() => localStorage.getItem('fixture-session'))).toBe('retained');
+  const persisted = JSON.parse(await readFile(join(dataDirectory, 'workspaces.json'), 'utf8'));
+  expect(persisted.accounts[0].theme).toBeUndefined();
+  await shellCommand({ type: 'cancel-theme', id: ids[0] });
+  await expect.poll(() => computed(studio, '.surface')).toBe(original);
+  await shellCommand({ type: 'save-theme', id: ids[0], theme: { preset: 'pine', mode: 'light' } });
+  colors = (await stateSnapshot()).appearance!.resolved.colors;
+  await expect.poll(() => computed(studio, '.surface')).toBe(rgb(colors.surface));
+  const saved = JSON.parse(await readFile(join(dataDirectory, 'workspaces.json'), 'utf8'));
+  expect(saved.accounts[0].theme).toEqual({ preset: 'pine', mode: 'light' });
+  await shellCommand({ type: 'select', id: ids[1] });
+  await shellCommand({ type: 'save-theme', id: ids[1], theme: { preset: 'custom', mode: 'dark', accent: '#ffcc00' } });
+  await application.close(); await launch(dataDirectory, true, true, themeFixture);
+  await expect.poll(async () => (await stateSnapshot()).accounts.map(account => account.themeSupport)).toEqual(['compatible','compatible']);
+  expect((await stateSnapshot()).accounts.map(account => account.theme)).toEqual([{ preset:'pine',mode:'light' }, { preset:'custom',mode:'dark',accent:'#ffcc00' }]);
+  expect((await stateSnapshot()).accounts.map(account => account.id)).toEqual(ids);
+});
+
+test('unrecognized Quo theme contracts fall back cleanly and same-origin authentication stays untouched', async () => {
+  await application.close(); await launch(dataDirectory, false, true, themeFixture);
+  const page = await addNative('Studio'); const id = (await stateSnapshot()).activeId!;
+  const original = await computed(page, '.surface');
+  await shellCommand({ type: 'save-theme', id, theme: { preset:'ocean',mode:'dark' } });
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]?.themeSupport).toBe('compatible');
+  await page.evaluate(prefix => {
+    const style = document.querySelector<HTMLStyleElement>('#verified-contract')!;
+    style.textContent = style.textContent!.replace(`${prefix}8:31, 31, 32;`, `${prefix}8:30, 30, 30;`);
+  }, themePrefix);
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]?.themeSupport).toBe('unsupported');
+  await expect.poll(() => computed(page, '.surface')).toBe(original);
+  await page.reload();
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]?.themeSupport).toBe('compatible');
+  await page.evaluate(() => { const input=document.createElement('input'); input.autocomplete='current-password'; document.body.append(input); });
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]?.themeSupport).toBe('waiting');
+  await expect.poll(() => computed(page, '.surface')).toBe(original);
+  expect(await page.locator('#sideMenu').evaluate(element => getComputedStyle(element).fontFamily)).toContain('Inter');
+});
+
+test('notification routing cancels an unsaved native theme preview without changing either profile', async () => {
+  await application.close(); await launch(dataDirectory, false, true, themeFixture);
+  const studio = await addNative('Studio'); const workshop = await addNative('Workshop');
+  const ids=(await stateSnapshot()).accounts.map(account=>account.id); const original=await computed(studio,'.surface');
+  await shellCommand({type:'workspace-theme',id:ids[0]});
+  await shellCommand({type:'preview-theme',id:ids[0],theme:{preset:'ember',mode:'dark'}});
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]?.themeSupport).toBe('compatible');
+  await workshop.evaluate(()=>document.getElementById('notify')!.click());
+  await expect.poll(async () => (await notifications()).length).toBeGreaterThan(0);
+  await application.evaluate(() => (globalThis as MainGlobal).notificationRecords.at(-1)!.notification.emit('click'));
+  await expect.poll(async () => (await stateSnapshot()).activeId).toBe(ids[1]);
+  await expect.poll(() => computed(studio,'.surface')).toBe(original);
+  expect((await stateSnapshot()).accounts.every(account=>account.theme===undefined)).toBe(true);
+});
+
+test('call status distinguishes hold and mute actions from states and ignores historical status text', async () => {
+  await application.close(); await launch(dataDirectory, false, true, themeFixture);
+  const page=await addNative('Studio'); const callState=async () => { const account=(await stateSnapshot()).accounts[0]!; return {phase:account.callPhase,muted:account.muted,inCall:account.inCall,ringing:account.ringing}; };
+  await page.getByRole('button',{name:'Simulate incoming call'}).click();
+  await expect.poll(callState).toEqual({phase:'ringing',muted:false,inCall:false,ringing:true});
+  await page.getByRole('button',{name:'Answer call'}).click();
+  await page.evaluate(()=>{ document.querySelector('#call')!.insertAdjacentHTML('beforeend','<button aria-label="Hold">Hold</button><button aria-label="Mute">Mute</button>'); document.body.insertAdjacentHTML('beforeend','<span role="status">Reconnecting</span>'); });
+  await expect.poll(callState).toEqual({phase:'active',muted:false,inCall:true,ringing:false});
+  await page.evaluate(()=>{document.querySelector('[aria-label="Hold"]')!.setAttribute('aria-label','Resume call'); document.querySelector('[aria-label="Mute"]')!.setAttribute('aria-label','Unmute');});
+  await expect.poll(callState).toEqual({phase:'held',muted:true,inCall:true,ringing:false});
+  for(const [text,phase] of [['Dialing','dialing'],['Connecting','connecting'],['Reconnecting','reconnecting'],['Transferring','transferring'],['Ending call','ending']] as const) {
+    await page.evaluate(text=>{document.querySelector('#call [role="status"]')?.remove(); const marker=document.createElement('span');marker.setAttribute('role','status');marker.textContent=text;document.querySelector('#call')!.append(marker);},text);
+    await expect.poll(callState).toMatchObject({phase,inCall:true});
+    await page.getByRole('button',{name:'End call'}).evaluate(element => element.setAttribute('disabled',''));
+    await expect.poll(callState).toMatchObject({phase,inCall:true});
+    await page.getByRole('button',{name:'End call'}).evaluate(element => element.removeAttribute('disabled'));
+  }
+  await page.evaluate(()=>{document.querySelector('#call [role="status"]')!.remove();document.querySelector('#call')!.insertAdjacentHTML('beforeend','<button aria-label="Answer call">Answer waiting call</button>');});
+  await expect.poll(callState).toEqual({phase:'held',muted:true,inCall:true,ringing:true});
+  await page.evaluate(()=>document.querySelector('#call')!.replaceChildren());
+  await expect.poll(callState).toEqual({phase:'idle',muted:false,inCall:false,ringing:false});
+});
+
+test('separate menu-bar items keep individual counts and source actions, animate ringing, and clean up on layout changes', async () => {
+  await application.close(); await launch(dataDirectory, false, true, themeFixture);
+  const studio=await addNative('Studio'); const workshop=await addNative('Workshop');
+  const ids=(await stateSnapshot()).accounts.map(account=>account.id);
+  const trays=()=>application.evaluate(()=>{
+    const latest=new Map<NativeTray,NativeMenu>(); for(const record of (globalThis as MainGlobal).trayMenus) if(!record.tray.isDestroyed()) latest.set(record.tray,record.menu);
+    return [...latest].map(([tray,menu])=>({name:menu.items[0]!.sublabel,title:tray.getTitle(),image:(globalThis as MainGlobal).trayImages.get(tray)!.toDataURL(),items:menu.items.map(item=>({id:item.id,label:item.label}))}));
+  });
+  await expect.poll(async()=> (await trays()).map(item=>[item.name,item.title])).toEqual([['Studio','22'],['Workshop','22']]);
+  await shellCommand({type:'select',id:ids[0]});
+  await application.evaluate(({BrowserWindow})=>{
+    const record=(globalThis as MainGlobal).trayMenus.findLast(record=>!record.tray.isDestroyed()&&record.menu.items[0]!.sublabel==='Workshop')!;
+    const item=record.menu.getMenuItemById('test-notification')!; item.click(item,BrowserWindow.getAllWindows()[0],{shiftKey:false,ctrlKey:false,altKey:false,metaKey:false,triggeredByAccelerator:false});
+  });
+  await expect.poll(async()=> (await notifications()).at(-1)?.title).toBe('Workshop');
+  await workshop.evaluate(()=>document.getElementById('ring')!.click());
+  await expect.poll(async()=> (await trays()).find(item=>item.name==='Workshop')!.items.some(item=>item.label.includes('Incoming call'))).toBe(true);
+  const frames=new Set<string>(); const still=new Set<string>();
+  for(let i=0;i<6;i++){const items=await trays();frames.add(items.find(item=>item.name==='Workshop')!.image);still.add(items.find(item=>item.name==='Studio')!.image);await window.waitForTimeout(240);}
+  expect(frames.size).toBe(2);expect(still.size).toBe(1);
+  const preferences=(await stateSnapshot()).preferences;
+  await shellCommand({type:'preferences',preferences:{...preferences,animateActivity:false}});
+  const fixed=(await trays()).find(item=>item.name==='Workshop')!.image;await window.waitForTimeout(750);expect((await trays()).find(item=>item.name==='Workshop')!.image).toBe(fixed);
+  await workshop.getByRole('button',{name:'Answer call'}).click();await workshop.getByRole('button',{name:'End call'}).click();
+  await shellCommand({type:'preferences',preferences:{...preferences,menuBarLayout:'combined'}});
+  await expect.poll(async()=> (await trays()).map(item=>item.title)).toEqual(['44']);
+  await shellCommand({type:'preferences',preferences:{...preferences,menuBarCount:false}});
+  await expect.poll(async()=> (await trays()).map(item=>[item.name,item.title])).toEqual([['Studio',''],['Workshop','']]);
+  await shellCommand({type:'preferences',preferences:{...preferences,showMenuBar:false}});expect(await trays()).toEqual([]);
+  expect(await studio.evaluate(()=>document.getElementById('sideMenu')!==null)).toBe(true);
+});
+
+test('system Reduce Motion stops menu-bar animation and removes page motion without changing the user preference', async () => {
+  await application.close(); await launch(dataDirectory,false,true,themeFixture);
+  const page=await addNative('Studio');const id=(await stateSnapshot()).activeId!;
+  await shellCommand({type:'save-theme',id,theme:{preset:'mac',mode:'light'}});
+  await page.getByRole('button',{name:'Simulate incoming call'}).click();
+  await expect.poll(async()=> (await stateSnapshot()).accounts[0]?.ringing).toBe(true);
+  await application.evaluate(({nativeTheme})=>{(globalThis as MainGlobal).fixtureReduceMotion=true;nativeTheme.emit('updated');});
+  await expect.poll(async()=> (await stateSnapshot()).appearance!.reduceMotion).toBe(true);
+  await expect.poll(()=>page.locator('.surface').evaluate(element=>getComputedStyle(element).animationDuration)).toBe('1e-05s');
+  const icon=()=>application.evaluate(()=>{const record=(globalThis as MainGlobal).trayMenus.findLast(record=>!record.tray.isDestroyed())!;return (globalThis as MainGlobal).trayImages.get(record.tray)!.toDataURL();});
+  const before=await icon();await window.waitForTimeout(750);expect(await icon()).toBe(before);
+  expect((await stateSnapshot()).preferences.animateActivity).toBe(true);
+  await page.getByRole('button',{name:'Answer call'}).click();await page.getByRole('button',{name:'End call'}).click();
 });

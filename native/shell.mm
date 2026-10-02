@@ -54,10 +54,11 @@ static NSView *material(NSRect frame, NSView *content) {
 @end
 
 @interface WorkspaceRow : NSTableRowView
+@property NSColor *accent;
 @end
 @implementation WorkspaceRow
 - (void)drawSelectionInRect:(NSRect)dirtyRect {
-  NSColor *tint = self.emphasized ? [NSColor.controlAccentColor colorWithAlphaComponent:0.13] : [NSColor.unemphasizedSelectedContentBackgroundColor colorWithAlphaComponent:0.6];
+  NSColor *tint = self.emphasized ? [(_accent ?: NSColor.controlAccentColor) colorWithAlphaComponent:0.13] : [NSColor.unemphasizedSelectedContentBackgroundColor colorWithAlphaComponent:0.6];
   [tint setFill];
   NSBezierPath *shape = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 2, 4) xRadius:12 yRadius:12];
   [shape fill];
@@ -74,8 +75,12 @@ static NSTextField *label(NSString *text, NSRect frame, CGFloat size) {
 }
 
 static NSString *status(NSDictionary *account) {
-  if ([account[@"inCall"] boolValue]) return @"On a call";
-  if ([account[@"ringing"] boolValue]) return @"Incoming call";
+  if ([account[@"ringing"] boolValue] && ![account[@"inCall"] boolValue]) return @"Incoming call";
+  if ([account[@"inCall"] boolValue]) {
+    NSString *state = @{@"held":@"On hold", @"dialing":@"Dialing…", @"connecting":@"Connecting…", @"reconnecting":@"Reconnecting…", @"transferring":@"Transferring…", @"ending":@"Ending call…"}[account[@"callPhase"]] ?: @"On a call";
+    if ([account[@"muted"] boolValue]) state = [state stringByAppendingString:@" · Muted"];
+    return [account[@"ringing"] boolValue] ? [@"Call waiting · " stringByAppendingString:state] : state;
+  }
   return @{@"loading": @"Opening…", @"ready": @"Workspace loaded", @"sign-in": @"Sign-in required", @"offline": @"Offline", @"error": @"Could not load"}[account[@"status"]] ?: @"";
 }
 
@@ -85,12 +90,32 @@ static NSColor *color(NSString *name) {
     @"rose": NSColor.systemPinkColor, @"violet": NSColor.systemPurpleColor}[name] ?: NSColor.controlAccentColor;
 }
 
+static NSColor *hexColor(NSString *hex) {
+  if (![hex isKindOfClass:NSString.class] || hex.length != 7 || ![hex hasPrefix:@"#"]) return NSColor.controlAccentColor;
+  unsigned value = 0; [[NSScanner scannerWithString:[hex substringFromIndex:1]] scanHexInt:&value];
+  return [NSColor colorWithSRGBRed:((value >> 16) & 255) / 255.0 green:((value >> 8) & 255) / 255.0 blue:(value & 255) / 255.0 alpha:1];
+}
+static NSString *hexString(NSColor *color) {
+  NSColor *rgb = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+  return [NSString stringWithFormat:@"#%02x%02x%02x", (int)round(rgb.redComponent * 255), (int)round(rgb.greenComponent * 255), (int)round(rgb.blueComponent * 255)];
+}
+static NSColor *callColor(NSString *phase) {
+  if ([phase isEqual:@"ringing"]) return NSColor.systemRedColor;
+  if ([phase isEqual:@"held"]) return NSColor.systemOrangeColor;
+  if ([phase isEqual:@"reconnecting"] || [phase isEqual:@"ending"]) return NSColor.systemOrangeColor;
+  if ([phase isEqual:@"active"]) return NSColor.systemGreenColor;
+  return NSColor.systemBlueColor;
+}
+static NSString *callSymbol(NSString *phase) {
+  return @{@"ringing":@"phone.badge.waveform.fill", @"held":@"pause.fill", @"reconnecting":@"arrow.clockwise", @"transferring":@"arrow.right", @"ending":@"phone.down.fill", @"dialing":@"phone.arrow.up.right", @"connecting":@"phone.connection.fill"}[phase] ?: @"phone.fill";
+}
+
 @interface WorkspaceAvatar : NSView
 @property NSDictionary *account;
 @end
 @implementation WorkspaceAvatar
 - (void)drawRect:(NSRect)dirtyRect {
-  NSColor *tint = color(_account[@"color"]);
+  NSColor *tint = (_account[@"accent"] ?: _account[@"themeAccent"]) ? hexColor(_account[@"accent"] ?: _account[@"themeAccent"]) : color(_account[@"color"]);
   [[tint colorWithAlphaComponent:0.14] setFill];
   [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:9 yRadius:9] fill];
   NSMutableString *initials = [NSMutableString string];
@@ -107,13 +132,14 @@ static NSColor *color(NSString *name) {
 @interface WorkspaceBadge : NSView
 @property NSString *text;
 @property BOOL calling;
+@property NSString *phase;
 @end
 @implementation WorkspaceBadge
 - (void)drawRect:(NSRect)dirtyRect {
-  [(_calling ? NSColor.systemGreenColor : NSColor.systemRedColor) setFill];
+  [(_calling ? callColor(_phase) : NSColor.systemRedColor) setFill];
   [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:7 yRadius:7] fill];
   if (_calling) {
-    NSImage *symbol = [NSImage imageWithSystemSymbolName:@"phone.fill" accessibilityDescription:nil];
+    NSImage *symbol = [NSImage imageWithSystemSymbolName:callSymbol(_phase) accessibilityDescription:nil];
     symbol = [symbol imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[NSColor.whiteColor]]];
     [symbol drawInRect:NSInsetRect(self.bounds, 3, 3)];
     return;
@@ -123,6 +149,17 @@ static NSColor *color(NSString *name) {
   [_text drawAtPoint:NSMakePoint((self.bounds.size.width - size.width) / 2, (self.bounds.size.height - size.height) / 2) withAttributes:attributes];
 }
 @end
+
+static NSImage *themePreview(NSDictionary *colors) {
+  NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(88, 48)];
+  [image lockFocus];
+  [hexColor(colors[@"surface"]) setFill]; [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(0, 0, 88, 48) xRadius:7 yRadius:7] fill];
+  [hexColor(colors[@"sidebar"]) setFill]; NSRectFill(NSMakeRect(4, 4, 22, 40));
+  [hexColor(colors[@"accent"]) setFill]; [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(7, 28, 16, 6) xRadius:3 yRadius:3] fill];
+  [hexColor(colors[@"secondary"]) setFill]; NSRectFill(NSMakeRect(32, 34, 28, 2)); NSRectFill(NSMakeRect(32, 27, 45, 2));
+  [hexColor(colors[@"selection"]) setFill]; [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(32, 8, 48, 13) xRadius:4 yRadius:4] fill];
+  [image unlockFocus]; return image;
+}
 
 @interface ShellController : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate, NSTextFieldDelegate>
 @property(weak) NSWindow *window;
@@ -146,11 +183,18 @@ static NSColor *color(NSString *name) {
 @property NSAlert *sheet;
 @property NSTextField *nameField;
 @property BOOL updating;
+@property NSString *themeId;
+@property NSMutableDictionary *themeDraft;
+@property NSArray<NSButton *> *themeCards;
+@property NSSegmentedControl *themeMode;
+@property NSColorWell *themeWell;
+@property NSTextField *themeStatus;
 @property napi_threadsafe_function callback;
 - (void)emit:(NSDictionary *)command;
 - (void)update:(NSDictionary *)snapshot;
 - (void)form:(NSString *)identifier;
 - (void)settings;
+- (void)theme:(NSString *)identifier;
 - (void)dismiss;
 - (void)dispose;
 @end
@@ -262,8 +306,11 @@ static NSColor *color(NSString *name) {
   _window.accessibilityChildren = [_originalAccessibilityChildren arrayByAddingObjectsFromArray:@[_sidebar, _toolbar]];
   _sidebar.accessibilityParent = _window;
   _toolbar.accessibilityParent = _window;
+  [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self selector:@selector(accessibilityChanged:) name:NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification object:nil];
+  [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(accessibilityChanged:) name:NSSystemColorsDidChangeNotification object:nil];
   return self;
 }
+- (void)accessibilityChanged:(NSNotification *)notification { [self emit:@{@"type":@"appearance-changed"}]; }
 - (void)emit:(NSDictionary *)command {
   if (!_callback) return;
   NSData *json = [NSJSONSerialization dataWithJSONObject:command options:0 error:nil];
@@ -276,6 +323,13 @@ static NSColor *color(NSString *name) {
   [_host addSubview:_sidebar positioned:NSWindowAbove relativeTo:nil];
   [_host addSubview:_toolbar positioned:NSWindowAbove relativeTo:nil];
   _updating = YES;
+  NSDictionary *appearance = snapshot[@"appearance"];
+  NSDictionary *activeState = nil;
+  for (NSDictionary *account in snapshot[@"accounts"]) if ([account[@"id"] isEqual:snapshot[@"activeId"]]) activeState = account;
+  BOOL original = [appearance[@"resolved"][@"original"] boolValue] || [activeState[@"themeSupport"] isEqual:@"unsupported"];
+  NSString *mode = appearance[@"theme"][@"mode"];
+  _window.appearance = original || [mode isEqual:@"system"] ? nil : [NSAppearance appearanceNamed:[mode isEqual:@"dark"] ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
+  if (@available(macOS 26.0, *)) ((NSGlassEffectView *)_chrome).tintColor = original ? nil : [hexColor(appearance[@"resolved"][@"colors"][@"accentText"]) colorWithAlphaComponent:0.06];
   BOOL collapseChanged = _collapsed != [snapshot[@"sidebarCollapsed"] boolValue];
   _collapsed = [snapshot[@"sidebarCollapsed"] boolValue];
   CGFloat inset = [_layout[_collapsed ? @"railWidth" : @"sidebarWidth"] doubleValue];
@@ -310,7 +364,7 @@ static NSColor *color(NSString *name) {
   [_table sizeToFit];
   _collapse.accessibilityLabel = _collapsed ? @"Expand sidebar" : @"Collapse sidebar";
   _collapse.toolTip = _collapsed ? @"Expand sidebar (⌘⇧L)" : @"Collapse sidebar (⌘⇧L)";
-  BOOL changed = collapseChanged || ![_accounts isEqual:snapshot[@"accounts"]] || ![_snapshot[@"activeId"] isEqual:snapshot[@"activeId"]];
+  BOOL changed = ![_snapshot[@"appearance"] isEqual:snapshot[@"appearance"]] || ![_snapshot[@"preferences"][@"animateActivity"] isEqual:snapshot[@"preferences"][@"animateActivity"]] || collapseChanged || ![_accounts isEqual:snapshot[@"accounts"]] || ![_snapshot[@"activeId"] isEqual:snapshot[@"activeId"]];
   _snapshot = snapshot;
   _accounts = snapshot[@"accounts"] ?: @[];
   NSInteger selected = -1;
@@ -327,7 +381,8 @@ static NSColor *color(NSString *name) {
   _more.enabled = YES;
   _add.enabled = _accounts.count < 12;
   _updating = NO;
-  if (collapseChanged && !NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion) {
+  [self refreshThemeCards];
+  if (collapseChanged && !NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion && [_snapshot[@"preferences"][@"animateActivity"] boolValue]) {
     _table.alphaValue = 0;
     [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
       context.duration = 0.16;
@@ -336,7 +391,7 @@ static NSColor *color(NSString *name) {
   }
 }
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)table { return _accounts.count; }
-- (NSTableRowView *)tableView:(NSTableView *)table rowViewForRow:(NSInteger)row { return [[WorkspaceRow alloc] init]; }
+- (NSTableRowView *)tableView:(NSTableView *)table rowViewForRow:(NSInteger)row { WorkspaceRow *view = [[WorkspaceRow alloc] init]; view.accent = _accounts[row][@"themeAccent"] ? hexColor(_accounts[row][@"themeAccent"]) : NSColor.controlAccentColor; return view; }
 - (NSView *)tableView:(NSTableView *)table viewForTableColumn:(NSTableColumn *)column row:(NSInteger)row {
   NSDictionary *account = _accounts[row];
   CGFloat rowHeight = [_layout[@"rowHeight"] doubleValue];
@@ -367,7 +422,14 @@ static NSColor *color(NSString *name) {
   if (calling) {
     WorkspaceBadge *call = [[WorkspaceBadge alloc] initWithFrame:NSMakeRect(_collapsed ? NSMaxX(avatar.frame) - 9 : 27, 5, 15, 15)];
     call.calling = YES;
+    call.phase = [account[@"ringing"] boolValue] ? @"ringing" : account[@"callPhase"];
     [cell addSubview:call];
+    if ([call.phase isEqual:@"ringing"] && !NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion && [_snapshot[@"preferences"][@"animateActivity"] boolValue]) {
+      call.wantsLayer = YES;
+      CABasicAnimation *pulse = [CABasicAnimation animationWithKeyPath:@"opacity"];
+      pulse.fromValue = @1; pulse.toValue = @0.55; pulse.duration = 0.65; pulse.autoreverses = YES; pulse.repeatCount = HUGE_VALF;
+      [call.layer addAnimation:pulse forKey:@"ringing"];
+    }
   }
   cell.accessibilityElement = YES;
   cell.accessibilityRole = NSAccessibilityGroupRole;
@@ -388,15 +450,15 @@ static NSColor *color(NSString *name) {
   [self populateMenu:menu account:_accounts[row] index:row];
 }
 - (void)populateMenu:(NSMenu *)menu account:(NSDictionary *)account index:(NSInteger)index {
-  NSArray *titles = @[@"Edit workspace…", @"Reload workspace", @"Move up", @"Move down", @"Remove workspace…"];
-  NSArray *actions = @[@"edit", @"reload", @"move-up", @"move-down", @"remove"];
+  NSArray *titles = @[@"Edit workspace…", @"Workspace theme…", @"Reload workspace", @"Move up", @"Move down", @"Remove workspace…"];
+  NSArray *actions = @[@"edit", @"workspace-theme", @"reload", @"move-up", @"move-down", @"remove"];
   menu.autoenablesItems = NO;
   for (NSUInteger i = 0; i < titles.count; ++i) {
-    if (i == 2 || i == 4) [menu addItem:NSMenuItem.separatorItem];
+    if (i == 3 || i == 5) [menu addItem:NSMenuItem.separatorItem];
     NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:titles[i] action:@selector(menuAction:) keyEquivalent:@""];
     item.target = self;
     item.representedObject = @{@"type": actions[i], @"id": account[@"id"]};
-    item.enabled = !(i == 2 && index == 0) && !(i == 3 && index == (NSInteger)_accounts.count - 1);
+    item.enabled = !(i == 3 && index == 0) && !(i == 4 && index == (NSInteger)_accounts.count - 1);
     [menu addItem:item];
   }
 }
@@ -483,17 +545,22 @@ static NSColor *color(NSString *name) {
   alert.informativeText = @"Closing the window keeps every workspace running. Quitting stops calls and notifications.";
   [alert addButtonWithTitle:@"Save"];
   [alert addButtonWithTitle:@"Cancel"];
-  NSView *fields = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 380, 252)];
-  NSArray *keys = @[@"notifications", @"privateNotifications", @"launchAtLogin", @"showMenuBar", @"menuBarCount", @"experimentalAnswer"];
-  NSArray *titles = @[@"Desktop notifications", @"Hide caller and message previews", @"Open Switchboard at login", @"Show Switchboard in the menu bar", @"Show unread count in the menu bar", @"Answer from notifications (experimental)"];
+  NSView *fields = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 380, 322)];
+  NSArray *keys = @[@"notifications", @"privateNotifications", @"launchAtLogin", @"showMenuBar", @"menuBarCount", @"experimentalAnswer", @"animateActivity"];
+  NSArray *titles = @[@"Desktop notifications", @"Hide caller and message previews", @"Open Switchboard at login", @"Show Switchboard in the menu bar", @"Show unread count in the menu bar", @"Answer from notifications (experimental)", @"Animate call activity"];
   NSMutableArray<NSButton *> *buttons = [NSMutableArray array];
   for (NSUInteger i = 0; i < keys.count; ++i) {
     NSButton *button = [NSButton checkboxWithTitle:titles[i] target:nil action:nil];
-    button.frame = NSMakeRect(0, 222 - i * 30, 380, 24);
+    button.frame = NSMakeRect(0, 292 - i * 28, 380, 24);
     button.state = [_snapshot[@"preferences"][keys[i]] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
     [buttons addObject:button];
     [fields addSubview:button];
   }
+  [fields addSubview:label(@"Menu bar", NSMakeRect(0, 82, 82, 22), 12)];
+  NSPopUpButton *layout = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(88, 80, 280, 26) pullsDown:NO];
+  [layout addItemsWithTitles:@[@"One icon per workspace", @"One combined icon"]];
+  [layout selectItemAtIndex:[_snapshot[@"preferences"][@"menuBarLayout"] isEqual:@"combined"] ? 1 : 0];
+  layout.accessibilityLabel = @"Menu bar layout"; [fields addSubview:layout];
   NSTextField *delivery = label(@"macOS can silence banners during Focus or screen sharing.", NSMakeRect(0, 49, 380, 16), 11);
   delivery.textColor = NSColor.secondaryLabelColor;
   [fields addSubview:delivery];
@@ -511,6 +578,7 @@ static NSColor *color(NSString *name) {
     if (response == NSAlertFirstButtonReturn) {
       NSMutableDictionary *preferences = [NSMutableDictionary dictionary];
       for (NSUInteger i = 0; i < keys.count; ++i) preferences[keys[i]] = @(buttons[i].state == NSControlStateValueOn);
+      preferences[@"menuBarLayout"] = layout.indexOfSelectedItem == 1 ? @"combined" : @"separate";
       [owner emit:@{@"type": @"preferences", @"preferences": preferences}];
     }
     owner.sheet = nil;
@@ -519,9 +587,71 @@ static NSColor *color(NSString *name) {
 - (void)testNotification:(id)sender {
   if ([_snapshot[@"activeId"] isKindOfClass:NSString.class]) [self emit:@{@"type": @"test-notification", @"id": _snapshot[@"activeId"]}];
 }
+- (void)refreshThemeCards {
+  if (!_themeId) return;
+  NSArray *catalog = _snapshot[@"themeCatalog"];
+  for (NSUInteger i = 0; i < MIN(catalog.count, _themeCards.count); ++i) {
+    NSButton *card = _themeCards[i]; card.image = themePreview(catalog[i][@"colors"]);
+    card.state = [catalog[i][@"id"] isEqual:_themeDraft[@"preset"]] ? NSControlStateValueOn : NSControlStateValueOff;
+  }
+  NSString *support = nil;
+  for (NSDictionary *account in _accounts) if ([account[@"id"] isEqual:_themeId]) support = account[@"themeSupport"];
+  _themeStatus.stringValue = [support isEqual:@"unsupported"] ? @"Quo changed its colors. Original colors are preserved." : [support isEqual:@"waiting"] ? @"Colors apply after this workspace finishes loading." : @"Preview applies to this workspace. Apply saves your choice.";
+}
+- (void)themeChanged:(id)sender {
+  if ([sender isKindOfClass:NSButton.class]) {
+    NSArray *catalog = _snapshot[@"themeCatalog"];
+    if ([sender tag] < (NSInteger)catalog.count) _themeDraft[@"preset"] = catalog[[sender tag]][@"id"];
+  }
+  _themeDraft[@"mode"] = @[@"system", @"light", @"dark"][_themeMode.selectedSegment];
+  if (sender == _themeWell) { _themeDraft[@"preset"] = @"custom"; _themeDraft[@"accent"] = hexString(_themeWell.color); }
+  if ([_themeDraft[@"preset"] isEqual:@"custom"] && !_themeDraft[@"accent"]) _themeDraft[@"accent"] = hexString(_themeWell.color);
+  [self refreshThemeCards];
+  [self emit:@{@"type":@"preview-theme", @"id":_themeId, @"theme":_themeDraft}];
+}
+- (void)theme:(NSString *)identifier {
+  if (_window.attachedSheet) { [_window.attachedSheet makeKeyAndOrderFront:nil]; return; }
+  NSDictionary *account = nil;
+  for (NSDictionary *item in _accounts) if ([item[@"id"] isEqual:identifier]) account = item;
+  if (!account) return;
+  _themeId = identifier;
+  _themeDraft = [account[@"theme"] mutableCopy] ?: [@{@"preset":@"quo", @"mode":@"system"} mutableCopy];
+  NSAlert *alert = [[NSAlert alloc] init]; alert.messageText = [NSString stringWithFormat:@"Theme for %@", account[@"name"]];
+  alert.informativeText = @"Choose a workspace palette. Quo’s call and warning colors keep their meaning.";
+  [alert addButtonWithTitle:@"Apply"]; [alert addButtonWithTitle:@"Cancel"];
+  NSView *fields = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 460, 284)];
+  NSMutableArray *cards = [NSMutableArray array]; NSArray *catalog = _snapshot[@"themeCatalog"];
+  for (NSUInteger i = 0; i < catalog.count; ++i) {
+    NSButton *card = [NSButton buttonWithTitle:catalog[i][@"name"] target:self action:@selector(themeChanged:)];
+    card.frame = NSMakeRect((i % 4) * 116, 190 - (i / 4) * 90, 108, 82);
+    card.bezelStyle = NSBezelStyleRegularSquare; card.buttonType = NSButtonTypePushOnPushOff;
+    card.imagePosition = NSImageAbove; card.imageScaling = NSImageScaleNone; card.tag = i;
+    card.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium]; card.accessibilityLabel = [catalog[i][@"name"] stringByAppendingString:@" theme"];
+    [fields addSubview:card]; [cards addObject:card];
+  }
+  _themeCards = cards;
+  [fields addSubview:label(@"Appearance", NSMakeRect(0, 65, 100, 20), 12)];
+  _themeMode = [NSSegmentedControl segmentedControlWithLabels:@[@"Automatic", @"Light", @"Dark"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(themeChanged:)];
+  _themeMode.frame = NSMakeRect(110, 62, 350, 26); _themeMode.accessibilityLabel = @"Workspace appearance";
+  _themeMode.selectedSegment = [@[@"system", @"light", @"dark"] indexOfObject:_themeDraft[@"mode"]]; [fields addSubview:_themeMode];
+  [fields addSubview:label(@"Custom accent", NSMakeRect(0, 30, 110, 20), 12)];
+  _themeWell = [[NSColorWell alloc] initWithFrame:NSMakeRect(110, 25, 48, 28)]; _themeWell.color = hexColor(_themeDraft[@"accent"] ?: @"#586bd6");
+  _themeWell.target = self; _themeWell.action = @selector(themeChanged:); _themeWell.accessibilityLabel = @"Custom accent color"; [fields addSubview:_themeWell];
+  _themeStatus = label(@"", NSMakeRect(0, 0, 460, 18), 11); _themeStatus.textColor = NSColor.secondaryLabelColor; [fields addSubview:_themeStatus];
+  alert.accessoryView = fields; alert.window.preventsApplicationTerminationWhenModal = NO; _sheet = alert; [self refreshThemeCards];
+  __weak ShellController *weakSelf = self;
+  [alert beginSheetModalForWindow:_window completionHandler:^(NSModalResponse response) {
+    ShellController *owner = weakSelf;
+    [owner.themeWell deactivate]; [NSColorPanel.sharedColorPanel close];
+    [owner emit:response == NSAlertFirstButtonReturn ? @{@"type":@"save-theme", @"id":identifier, @"theme":owner.themeDraft} : @{@"type":@"cancel-theme", @"id":identifier}];
+    owner.themeId = nil; owner.themeDraft = nil; owner.themeCards = nil; owner.themeMode = nil; owner.themeWell = nil; owner.themeStatus = nil; owner.sheet = nil;
+  }];
+}
 - (void)dismiss { if (_window.attachedSheet) [_window endSheet:_window.attachedSheet returnCode:NSModalResponseCancel]; }
 - (void)dispose {
   [self dismiss];
+  [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:self];
+  [NSNotificationCenter.defaultCenter removeObserver:self];
   _table.delegate = nil;
   _table.dataSource = nil;
   _table.menu.delegate = nil;
@@ -591,6 +721,19 @@ static napi_value form(napi_env env, napi_callback_info info) {
   [controller form:count ? stringArgument(env, arg) : nil];
   return nullptr;
 }
+static napi_value theme(napi_env env, napi_callback_info info) {
+  size_t count = 1; napi_value arg; napi_get_cb_info(env, info, &count, &arg, nullptr, nullptr);
+  if (count) [controller theme:stringArgument(env, arg)]; return nullptr;
+}
+static napi_value environment(napi_env env, napi_callback_info info) {
+  if (!NSThread.isMainThread) { napi_throw_error(env, nullptr, "Appearance requires the main thread"); return nullptr; }
+  napi_value result, motion, contrast, accent; napi_create_object(env, &result);
+  napi_get_boolean(env, NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion, &motion);
+  napi_get_boolean(env, NSWorkspace.sharedWorkspace.accessibilityDisplayShouldIncreaseContrast, &contrast);
+  napi_create_string_utf8(env, hexString(NSColor.controlAccentColor).UTF8String, NAPI_AUTO_LENGTH, &accent);
+  napi_set_named_property(env, result, "reduceMotion", motion); napi_set_named_property(env, result, "increaseContrast", contrast); napi_set_named_property(env, result, "systemAccent", accent);
+  return result;
+}
 static napi_value settings(napi_env env, napi_callback_info info) { [controller settings]; return nullptr; }
 static napi_value dismiss(napi_env env, napi_callback_info info) { [controller dismiss]; return nullptr; }
 static napi_value dispose(napi_env env, napi_callback_info info) { [controller dispose]; controller = nil; return nullptr; }
@@ -609,16 +752,20 @@ static napi_value image(napi_env env, napi_callback_info info) {
   NSAffineTransform *scale = [NSAffineTransform transform];
   [scale scaleBy:2];
   [scale concat];
-  if ([options[@"type"] isEqual:@"avatar"]) {
-    WorkspaceAvatar *avatar = [[WorkspaceAvatar alloc] initWithFrame:NSMakeRect(0, 0, 18, 18)];
-    avatar.account = options;
-    [avatar drawRect:avatar.bounds];
-  } else {
-    NSString *symbol = [options[@"state"] isEqual:@"ringing"] ? @"phone.badge.waveform.fill" : [options[@"state"] isEqual:@"call"] ? @"phone.fill" : @"rectangle.stack";
-    NSImage *icon = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
+  BOOL avatarType = [options[@"type"] isEqual:@"avatar"];
+  NSString *phase = options[@"state"] ?: @"idle";
+  BOOL busy = ![phase isEqual:@"idle"];
+  if (avatarType) {
+    WorkspaceAvatar *avatar = [[WorkspaceAvatar alloc] initWithFrame:NSMakeRect(0, 0, 18, 18)]; avatar.account = options; [avatar drawRect:avatar.bounds];
+  }
+  if (!avatarType || busy) {
+    NSRect rect = avatarType ? NSMakeRect(8, 0, 10, 10) : NSMakeRect(1, 1, 16, 16);
+    if (avatarType) { [callColor(phase) setFill]; [[NSBezierPath bezierPathWithOvalInRect:rect] fill]; rect = NSInsetRect(rect, 2, 2); }
+    NSImage *icon = [NSImage imageWithSystemSymbolName:busy ? callSymbol(phase) : @"rectangle.stack" accessibilityDescription:nil];
     if (!icon) icon = [NSImage imageWithSystemSymbolName:@"phone.fill" accessibilityDescription:nil];
-    icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[NSColor.blackColor]]];
-    [icon drawInRect:NSMakeRect(1, 1, 16, 16)];
+    NSColor *tint = avatarType ? NSColor.whiteColor : busy ? callColor(phase) : NSColor.blackColor;
+    if ([phase isEqual:@"ringing"] && [options[@"frame"] intValue]) tint = [tint colorWithAlphaComponent:0.55];
+    icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[tint]]]; [icon drawInRect:rect];
   }
   [NSGraphicsContext restoreGraphicsState];
   NSData *png = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
@@ -632,6 +779,8 @@ static napi_value initialize(napi_env env, napi_value exports) {
     {"attach", nullptr, attach, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"update", nullptr, update, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"form", nullptr, form, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"theme", nullptr, theme, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"environment", nullptr, environment, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"settings", nullptr, settings, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"dismiss", nullptr, dismiss, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"dispose", nullptr, dispose, nullptr, nullptr, nullptr, napi_default, nullptr},

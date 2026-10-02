@@ -1,12 +1,15 @@
+import type { CallPhase } from '../shared/model';
+
 function label(element: HTMLElement): string {
   return (element.getAttribute('aria-label') || element.getAttribute('title') || element.textContent || '').trim().replace(/\s+/g, ' ');
 }
 
-function usable(element: HTMLElement): boolean {
+function visible(element: HTMLElement): boolean {
   const style = getComputedStyle(element);
-  return element.isConnected && element.getClientRects().length > 0 && style.visibility !== 'hidden' && style.display !== 'none'
-    && !element.hasAttribute('disabled') && element.getAttribute('aria-disabled') !== 'true';
+  return element.isConnected && element.getClientRects().length > 0 && style.visibility !== 'hidden' && style.display !== 'none';
 }
+
+function usable(element: HTMLElement): boolean { return visible(element) && !element.hasAttribute('disabled') && element.getAttribute('aria-disabled') !== 'true'; }
 
 export function findAnswerButton(root: Document): HTMLElement | null {
   const candidates = Array.from(root.querySelectorAll<HTMLElement>('button, [role="button"]')).filter(element => {
@@ -23,5 +26,24 @@ export function findAnswerButton(root: Document): HTMLElement | null {
 
 export function hasActiveCall(root: Document): boolean {
   return Array.from(root.querySelectorAll<HTMLElement>('button, [role="button"]'))
-    .some(element => usable(element) && /^(end call|hang up|hangup)$/i.test(label(element)));
+    .some(element => visible(element) && /^(end call|hang up|hangup)$/i.test(label(element)));
+}
+
+export function readCallState(root: Document): { inCall: boolean; callPhase: CallPhase; muted: boolean } {
+  const controls = Array.from(root.querySelectorAll<HTMLElement>('button, [role="button"]')).filter(visible);
+  const end = controls.filter(element => /^(end call|hang up|hangup)$/i.test(label(element)));
+  if (!end.length) return { inCall: false, callPhase: findAnswerButton(root) ? 'ringing' : 'idle', muted: false };
+  // Ambiguous or multiple call panels remain busy without guessing their state.
+  if (end.length !== 1) return { inCall: true, callPhase: 'active', muted: false };
+  const region = end[0]!.closest<HTMLElement>('[role="dialog"], [role="alertdialog"], [aria-label="Call controls"], [aria-label="Active call"]');
+  if (!region) return { inCall: true, callPhase: 'active', muted: false };
+  const buttons = controls.filter(element => region.contains(element));
+  const held = buttons.some(element => /^(resume( call)?|unhold( call)?)$/i.test(label(element))
+    || (/^hold( call)?$/i.test(label(element)) && element.getAttribute('aria-pressed') === 'true'));
+  const muted = buttons.some(element => /^unmute( microphone)?$/i.test(label(element))
+    || (/^mute( microphone)?$/i.test(label(element)) && element.getAttribute('aria-pressed') === 'true'));
+  const markers = Array.from(region.querySelectorAll<HTMLElement>('[role="status"], [aria-live], [aria-label]')).filter(visible).map(label);
+  const phases: [RegExp, CallPhase][] = [[/^reconnecting(…|\.\.\.)?$/i, 'reconnecting'], [/^transferring( call)?(…|\.\.\.)?$/i, 'transferring'],
+    [/^(ending|disconnecting)( call)?(…|\.\.\.)?$/i, 'ending'], [/^connecting(…|\.\.\.)?$/i, 'connecting'], [/^(dialing|calling)(…|\.\.\.)?$/i, 'dialing']];
+  return { inCall: true, callPhase: phases.find(([pattern]) => markers.some(marker => pattern.test(marker)))?.[1] ?? (held ? 'held' : 'active'), muted };
 }

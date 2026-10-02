@@ -120,7 +120,7 @@ function openAccount(account?: AccountState): void {
 
 function openSettings(): void {
   if (state.nativeShell) { void run({ type: 'settings' }); return; }
-  for (const [key, value] of Object.entries(state.preferences)) settingsForm.querySelector<HTMLInputElement>(`input[name="${key}"]`)!.checked = value;
+  for (const [key, value] of Object.entries(state.preferences)) { if (key === 'menuBarLayout') settingsForm.querySelector<HTMLSelectElement>('select[name="menuBarLayout"]')!.value = value as string; else settingsForm.querySelector<HTMLInputElement>(`input[name="${key}"]`)!.checked = value as boolean; };
   get('settings-error').textContent = '';
   void openDialog(settingsDialog).catch(() => toast('Could not open settings.'));
 }
@@ -157,7 +157,7 @@ accountForm.addEventListener('submit', event => {
 });
 settingsForm.addEventListener('submit', event => {
   event.preventDefault();
-  const preferences = Object.fromEntries(Object.keys(state.preferences).map(key => [key, settingsForm.querySelector<HTMLInputElement>(`input[name="${key}"]`)!.checked])) as unknown as Preferences;
+  const preferences = Object.fromEntries(Object.keys(state.preferences).map(key => [key, key === 'menuBarLayout' ? settingsForm.querySelector<HTMLSelectElement>('select[name="menuBarLayout"]')!.value : settingsForm.querySelector<HTMLInputElement>(`input[name="${key}"]`)!.checked])) as unknown as Preferences;
   void window.switchboard.command({ type: 'preferences', preferences }).then(() => settingsDialog.close()).catch(() => { get('settings-error').textContent = 'Could not save your settings. Please try again.'; });
 });
 get('add').addEventListener('click', () => openAccount());

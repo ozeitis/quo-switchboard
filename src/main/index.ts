@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, powerMonitor, powerSaveBlocker, shell, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerMonitor, powerSaveBlocker, shell, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -10,7 +10,8 @@ import { NativeShell } from './native-shell';
 import { Health } from './health';
 import { WindowState } from './window-state';
 import { MenuBar } from './menu-bar';
-import { validColor, validId, validName, validPreferences, ZOOM_FACTORS, type ShellCommand, type Snapshot } from '../shared/model';
+import { CALL_PHASES, validColor, validId, validName, validPreferences, ZOOM_FACTORS, type AccountState, type CallPhase, type ThemeSupport, type ShellCommand, type Snapshot } from '../shared/model';
+import { cleanTheme, DEFAULT_THEME, resolveTheme, THEME_PRESETS, validTheme, type AppearanceOptions, type WorkspaceTheme } from '../shared/theme';
 import { SHELL_LAYOUT } from '../shared/layout';
 
 app.setName('Switchboard');
@@ -37,16 +38,34 @@ const rate = new RateLimit(20, 10_000);
 const shellURL = pathToFileURL(join(__dirname, 'renderer/index.html')).href;
 const releasesURL = 'https://github.com/ozeitis/quo-switchboard/releases';
 
+const themePreviews = new Map<string, WorkspaceTheme>();
+function appearance(id: string | null): AppearanceOptions {
+  const theme = (id ? themePreviews.get(id) ?? store.value.accounts.find(account => account.id === id)?.theme : undefined) ?? DEFAULT_THEME;
+  const environment = NativeShell.environment();
+  return { macFonts: store.value.macAppearance, theme, resolved: resolveTheme(theme, nativeTheme.shouldUseDarkColors, environment.increaseContrast, environment.systemAccent),
+    increaseContrast: environment.increaseContrast, reduceMotion: environment.reduceMotion || !store.value.preferences.animateActivity };
+}
+function configureAppearances(): void { for (const entry of accounts.entries.values()) accounts.configureAppearance(entry); }
+
 function snapshot(): Snapshot {
+  const activeAppearance = appearance(store.value.activeId);
+  const environment = NativeShell.environment();
   return {
     nativeShell: !!nativeShell,
     sidebarCollapsed: store.value.sidebarCollapsed,
     macAppearance: store.value.macAppearance,
-    accounts: store.value.accounts.map(account => accounts.entries.get(account.id)?.state ?? { ...account, status: 'loading', unread: 0, unreadKnown: false, ringing: false, inCall: false }),
+    accounts: store.value.accounts.map((account): AccountState => {
+      const state = accounts.entries.get(account.id)?.state ?? { ...account, status: 'loading', unread: 0, unreadKnown: false,
+        ringing: false, inCall: false, callPhase: 'idle', muted: false, themeSupport: 'unmodified' };
+      const theme = themePreviews.get(account.id) ?? account.theme;
+      return { ...state, theme, themeAccent: theme && theme.preset !== 'quo' ? appearance(account.id).resolved.colors.accentText : undefined };
+    }),
     activeId: store.value.activeId,
     preferences: store.value.preferences,
     notificationError,
-    version: app.getVersion()
+    version: app.getVersion(),
+    appearance: activeAppearance,
+    themeCatalog: THEME_PRESETS.map(preset => ({ id: preset.id, name: preset.name, colors: resolveTheme({ preset: preset.id, mode: activeAppearance.theme.mode, accent: activeAppearance.theme.accent ?? preset.accent }, nativeTheme.shouldUseDarkColors, environment.increaseContrast, environment.systemAccent).colors }))
   };
 }
 
@@ -59,6 +78,7 @@ function show(): void {
 
 function select(id: string, focus = true): void {
   if (!accounts.entries.has(id)) return;
+  for (const previewId of themePreviews.keys()) { themePreviews.delete(previewId); const entry = accounts.entries.get(previewId); if (entry) accounts.configureAppearance(entry); }
   store.save({ ...store.value, activeId: id });
   overlay = false;
   nativeShell?.dismiss();
@@ -119,6 +139,7 @@ function refreshMenus(): void {
     { label: 'Workspace', submenu: [
       { label: 'New workspace…', accelerator: 'CommandOrControl+N', enabled: store.value.accounts.length < 12, click: () => intent('add') },
       ...(nativeShell ? [{ label: 'Edit workspace…', enabled: !!store.value.activeId, click: () => { if (store.value.activeId) { show(); nativeShell?.form(store.value.activeId); } } }] : []),
+      { label: 'Workspace theme…', enabled: !!store.value.activeId, click: () => { if (store.value.activeId) void command({ type: 'workspace-theme', id: store.value.activeId }); } },
       { type: 'separator' }, ...workspaceItems,
       { type: 'separator' }, { label: 'Reload workspace', accelerator: 'CommandOrControl+R', enabled: !!store.value.activeId, click: () => { if (store.value.activeId) void accounts.reload(store.value.activeId); } }
     ] },
@@ -154,8 +175,31 @@ async function command(value: unknown): Promise<void> {
     case 'toggle-sidebar': store.save({ ...store.value, sidebarCollapsed: !store.value.sidebarCollapsed }); break;
     case 'toggle-appearance': {
       store.save({ ...store.value, macAppearance: !store.value.macAppearance });
-      for (const entry of accounts.entries.values()) if (appOrigin(entry.view.webContents.getURL())) entry.view.webContents.send('account:appearance', store.value.macAppearance);
+      configureAppearances();
       break;
+    }
+    case 'appearance-changed': configureAppearances(); break;
+    case 'workspace-theme': {
+      if (!validId(cmd.id) || !accounts.entries.has(cmd.id)) break;
+      select(cmd.id); nativeShell?.theme(cmd.id); break;
+    }
+    case 'preview-theme':
+    case 'save-theme': {
+      if (!validId(cmd.id) || !validTheme(cmd.theme)) throw new Error('Invalid workspace theme.');
+      const entry = accounts.entries.get(cmd.id); if (!entry) break;
+      const theme = cleanTheme(cmd.theme);
+      if (cmd.type === 'save-theme') {
+        store.save({ ...store.value, accounts: store.value.accounts.map(account => account.id === cmd.id ? { ...account, theme } : account) });
+        entry.state.theme = theme; themePreviews.delete(cmd.id);
+      } else {
+        if (cmd.id !== store.value.activeId) break;
+        themePreviews.set(cmd.id, theme);
+      }
+      accounts.configureAppearance(entry); break;
+    }
+    case 'cancel-theme': {
+      if (!validId(cmd.id)) break;
+      themePreviews.delete(cmd.id); const entry = accounts.entries.get(cmd.id); if (entry) accounts.configureAppearance(entry); break;
     }
     case 'zoom-in':
     case 'zoom-out':
@@ -240,6 +284,7 @@ async function command(value: unknown): Promise<void> {
       if (!validPreferences(cmd.preferences)) throw new Error('Invalid preferences.');
       if (app.isPackaged && cmd.preferences.launchAtLogin !== store.value.preferences.launchAtLogin) app.setLoginItemSettings({ openAtLogin: cmd.preferences.launchAtLogin });
       store.save({ ...store.value, preferences: cmd.preferences });
+      configureAppearances();
       if (!cmd.preferences.notifications) notifications.closeAll();
       break;
     }
@@ -273,7 +318,7 @@ if (gotLock) void app.whenReady().then(async () => {
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   health = new Health(app.getPath('userData'));
-  accounts = new Accounts(window, publish, id => notifications?.reset(id), health, () => store.value.macAppearance);
+  accounts = new Accounts(window, publish, id => notifications?.reset(id), health, appearance);
   notifications = new Notifications(window, accounts, () => store.value.preferences, select, () => { notificationError = true; publish(); });
 
   ipcMain.handle('shell:snapshot', event => { assertShell(event); return snapshot(); });
@@ -301,13 +346,16 @@ if (gotLock) void app.whenReady().then(async () => {
     switch (data.type) {
       case 'heartbeat': health.heartbeat(accountId); break;
       case 'state':
-        if (!['ready', 'sign-in', 'offline'].includes(String(data.status)) || typeof data.inCall !== 'boolean' || typeof data.unreadKnown !== 'boolean' || typeof data.unread !== 'number' || !Number.isInteger(data.unread)) return;
+        if (!['ready', 'sign-in', 'offline'].includes(String(data.status)) || !CALL_PHASES.includes(data.callPhase as CallPhase) || typeof data.muted !== 'boolean' || !['unmodified', 'waiting', 'compatible', 'unsupported'].includes(String(data.themeSupport)) || typeof data.inCall !== 'boolean' || typeof data.unreadKnown !== 'boolean' || typeof data.unread !== 'number' || !Number.isInteger(data.unread)) return;
         if (entry.state.status !== data.status) health.record(data.status as 'ready' | 'sign-in' | 'offline', accountId);
         entry.state.status = data.status as 'ready' | 'sign-in' | 'offline';
         accounts.applyZoom(entry);
         entry.state.unread = Math.max(0, Math.min(data.unread, 9999));
         entry.state.unreadKnown = data.unreadKnown;
         entry.state.inCall = data.inCall;
+        entry.state.callPhase = data.callPhase as CallPhase;
+        entry.state.muted = data.muted;
+        entry.state.themeSupport = data.themeSupport as ThemeSupport;
         publish();
         break;
       case 'notification':
@@ -338,6 +386,7 @@ if (gotLock) void app.whenReady().then(async () => {
     }
   });
 
+  nativeTheme.on('updated', () => { configureAppearances(); publish(); });
   for (const account of store.value.accounts) accounts.create(account);
   window.on('resize', () => { layoutWorkspaces(); nativeShell?.update(snapshot()); });
   window.on('close', event => { if (!quitting) { event.preventDefault(); window.hide(); } });

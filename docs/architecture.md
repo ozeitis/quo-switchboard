@@ -35,11 +35,17 @@ Native table rows draw an inset selection inside the actual viewport; extra AppK
 
 Settings are validated on read and write, saved through a temporary file and rename, and created with owner-only file permissions. A malformed settings file stops startup without replacing it. Browser profiles live outside the application bundle under `~/Library/Application Support/Switchboard`.
 
-`MenuBar` owns one native status item through Electron's public Tray API. AppKit renders its SF Symbol and colored initial icons at Retina resolution. The native menu shows per-workspace unread activity and call state, prioritizes ringing workspaces, and routes selections through the existing account coordinator. A stable status-item identity preserves placement. Visibility and count preferences survive updates. Native appearance changes regenerate the small images; the cache is bounded to current workspace names/colors.
+`MenuBar` owns one native status item per workspace, or one combined item when selected in Settings. UUIDs provide stable identities. AppKit renders initials and semantic call symbols at Retina resolution. Every workspace menu scopes its count and test notification to its own account, even while another account is selected. Layout changes destroy obsolete items; hiding or quitting clears them all. A single 650 ms timer animates only ringing icons. It stops on idle, hidden menu bar, Reduce Motion, or disabled activity animation. Images have a bounded cache.
 
 The unread adapter reads Quo's semantic navigation badge labels, with a title fallback. It reports unavailable counts explicitly and preserves hovered-row counts while Quo displays More in place of a badge. It never sums the title with sidebar badges or counts the selected conversation list again. Unread changes update the rail, Dock, and status item; they do not replay old desktop alerts. See [count semantics and menu-bar design](menu-bar.md).
 
 Email login navigates from `my.quo.com` through Quo's production Auth0 domain, `signin.openphone.com`, and back to Quo in the same view. Keeping the browsing context intact preserves Quo's authentication transaction in session storage. The authentication origin is allowed to navigate but receives no page adapter or privileged bridge. Ordinary external links open in the browser without resetting the current workspace's call state.
+
+## Workspace appearance
+
+A native AppKit sheet owns the palette cards, appearance segments, and standard macOS color well. Live previews live in memory; Apply validates and atomically saves only the theme alongside the existing workspace UUID. Cancellation, Escape, or notification-driven account switching restores the saved theme. Window appearance and glass tint follow the active workspace. Other retained views receive their own palettes.
+
+Color.js generates OKLCH palettes, maps them to sRGB, and measures contrast after hex serialization. Text and solid-button accents are distinct roles. Native controls keep macOS semantic colors; call and warning colors retain their meanings. The sandboxed presentation adapter discovers Quo’s 88-token contract from same-origin CSSOM, validates its complete fingerprint, and overrides verified providers including body portals. It also handles BlockNote/Mantine editor tokens, Plyr audio controls, and a small set of audited exceptions. Unknown contracts remove color overrides. Authentication remains untouched. See [coverage and maintenance](themes.md).
 
 ## Notification flow
 

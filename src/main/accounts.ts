@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { appOrigin, accountNavigation, externalURL } from './policy';
 import { partitionFor, type Account, type AccountState } from '../shared/model';
 import { Health, RecoveryBudget } from './health';
+import type { AppearanceOptions } from '../shared/theme';
 import { installTextMenu } from './text-menu';
 
 export interface LiveAccount {
@@ -17,7 +18,7 @@ export class Accounts {
   readonly entries = new Map<string, LiveAccount>();
   private allowedPermissions = new Set(['notifications', 'media', 'speaker-selection', 'fullscreen', 'clipboard-sanitized-write']);
   private closing = false;
-  constructor(private window: BrowserWindow, private changed: () => void, private reset: (id: string) => void, private health: Health, private macAppearance: () => boolean) {}
+  constructor(private window: BrowserWindow, private changed: () => void, private reset: (id: string) => void, private health: Health, private appearance: (id: string) => AppearanceOptions) {}
 
   create(account: Account): LiveAccount {
     const profile = session.fromPartition(partitionFor(account.id));
@@ -41,7 +42,7 @@ export class Accounts {
       backgroundThrottling: false, spellcheck: true, autoplayPolicy: 'no-user-gesture-required'
     } });
     view.setBackgroundColor('#ffffff');
-    const entry: LiveAccount = { state: { ...account, status: 'loading', unread: 0, unreadKnown: false, ringing: false, inCall: false }, view, ringId: null, recovery: new RecoveryBudget() };
+    const entry: LiveAccount = { state: { ...account, status: 'loading', unread: 0, unreadKnown: false, ringing: false, inCall: false, callPhase: 'idle', muted: false, themeSupport: 'unmodified' }, view, ringId: null, recovery: new RecoveryBudget() };
     this.entries.set(account.id, entry);
     this.window.contentView.addChildView(view);
     const contents = view.webContents;
@@ -66,16 +67,20 @@ export class Accounts {
       entry.ringId = null;
       entry.state.ringing = false;
       entry.state.inCall = false;
+      entry.state.callPhase = 'idle';
+      entry.state.muted = false;
+      entry.state.themeSupport = 'waiting';
       entry.state.status = 'loading';
       this.changed();
     });
     const finishedLoading = () => {
       if (entry.state.status === 'loading') entry.state.status = appOrigin(contents.getURL()) ? 'ready' : 'sign-in';
       this.applyZoom(entry);
-      if (appOrigin(contents.getURL())) contents.send('account:appearance', this.macAppearance());
+      if (appOrigin(contents.getURL())) this.configureAppearance(entry);
       if (entry.state.status !== 'error') { clearTimeout(entry.retry); entry.retry = undefined; }
       this.changed();
     };
+    contents.on('dom-ready', () => this.configureAppearance(entry));
     contents.on('did-finish-load', finishedLoading);
     contents.on('did-stop-loading', finishedLoading);
     contents.on('did-fail-load', (_event, code, _description, _url, mainFrame) => {
@@ -86,6 +91,10 @@ export class Accounts {
     contents.on('responsive', () => this.health.record('responsive', account.id));
     void contents.loadURL('https://my.quo.com').catch(() => this.failed(entry));
     return entry;
+  }
+
+  configureAppearance(entry: LiveAccount): void {
+    if (!entry.view.webContents.isDestroyed() && appOrigin(entry.view.webContents.getURL())) entry.view.webContents.send('account:appearance', this.appearance(entry.state.id));
   }
 
   applyZoom(entry: LiveAccount): void {
@@ -101,6 +110,9 @@ export class Accounts {
     entry.ringId = null;
     entry.state.ringing = false;
     entry.state.inCall = false;
+    entry.state.callPhase = 'idle';
+    entry.state.muted = false;
+    entry.state.themeSupport = 'waiting';
     this.changed();
     this.scheduleRecovery(entry);
   }
@@ -166,7 +178,7 @@ export class Accounts {
       this.health.forget(id);
     } catch (error) {
       // Restore a usable view if local cleanup fails; settings still reference it.
-      this.create({ id, name: entry.state.name, color: entry.state.color, zoom: entry.state.zoom });
+      this.create({ id, name: entry.state.name, color: entry.state.color, zoom: entry.state.zoom, theme: entry.state.theme });
       this.health.record('storage-error', id);
       this.changed();
       throw error;
