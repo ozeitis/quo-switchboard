@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { appOrigin, accountNavigation, externalURL } from './policy';
 import { partitionFor, type Account, type AccountState } from '../shared/model';
 import { Health, RecoveryBudget } from './health';
+import { installTextMenu } from './text-menu';
 
 export interface LiveAccount {
   state: AccountState;
@@ -16,7 +17,7 @@ export class Accounts {
   readonly entries = new Map<string, LiveAccount>();
   private allowedPermissions = new Set(['notifications', 'media', 'speaker-selection', 'fullscreen', 'clipboard-sanitized-write']);
   private closing = false;
-  constructor(private window: BrowserWindow, private changed: () => void, private reset: (id: string) => void, private health: Health) {}
+  constructor(private window: BrowserWindow, private changed: () => void, private reset: (id: string) => void, private health: Health, private macAppearance: () => boolean) {}
 
   create(account: Account): LiveAccount {
     const profile = session.fromPartition(partitionFor(account.id));
@@ -44,6 +45,8 @@ export class Accounts {
     this.entries.set(account.id, entry);
     this.window.contentView.addChildView(view);
     const contents = view.webContents;
+    contents.setZoomMode('isolated');
+    installTextMenu(contents, this.window);
 
     const guardNavigation = (event: Electron.Event, url: string) => {
       if (!accountNavigation(url)) { event.preventDefault(); void this.openExternal(url); }
@@ -68,6 +71,8 @@ export class Accounts {
     });
     const finishedLoading = () => {
       if (entry.state.status === 'loading') entry.state.status = appOrigin(contents.getURL()) ? 'ready' : 'sign-in';
+      this.applyZoom(entry);
+      if (appOrigin(contents.getURL())) contents.send('account:appearance', this.macAppearance());
       if (entry.state.status !== 'error') { clearTimeout(entry.retry); entry.retry = undefined; }
       this.changed();
     };
@@ -81,6 +86,12 @@ export class Accounts {
     contents.on('responsive', () => this.health.record('responsive', account.id));
     void contents.loadURL('https://my.quo.com').catch(() => this.failed(entry));
     return entry;
+  }
+
+  applyZoom(entry: LiveAccount): void {
+    const contents = entry.view.webContents;
+    const zoom = appOrigin(contents.getURL()) && entry.state.status !== 'sign-in' ? entry.state.zoom ?? 1 : 1;
+    if (contents.getZoomFactor() !== zoom) contents.setZoomFactor(zoom);
   }
 
   private failed(entry: LiveAccount): void {
@@ -155,7 +166,7 @@ export class Accounts {
       this.health.forget(id);
     } catch (error) {
       // Restore a usable view if local cleanup fails; settings still reference it.
-      this.create({ id, name: entry.state.name, color: entry.state.color });
+      this.create({ id, name: entry.state.name, color: entry.state.color, zoom: entry.state.zoom });
       this.health.record('storage-error', id);
       this.changed();
       throw error;

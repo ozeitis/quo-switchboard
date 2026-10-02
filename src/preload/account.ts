@@ -2,10 +2,15 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { AccountEvent } from '../shared/model';
 import { appOrigin } from '../main/policy';
 import { findAnswerButton, hasActiveCall } from './call-controls';
+import { DesktopAppearance } from './appearance';
 
 // This preload never receives account credentials or exposes Electron APIs to Quo.
 if (appOrigin(location.href) && process.isMainFrame) {
   const send = (event: AccountEvent) => ipcRenderer.send('account:event', event);
+  const appearance = process.platform === 'darwin' ? new DesktopAppearance() : undefined;
+  ipcRenderer.on('account:appearance', (_event, enabled: boolean) => {
+    if (typeof enabled === 'boolean') appearance?.setEnabled(enabled);
+  });
 
   window.addEventListener('switchboard:notification', event => {
     try {
@@ -85,6 +90,7 @@ if (appOrigin(location.href) && process.isMainFrame) {
   let ring: { id: string; button: HTMLElement } | null = null;
   let lastState = '';
   const update = () => {
+    appearance?.update();
     const button = findAnswerButton(document);
     if (ring && button !== ring.button) {
       send({ type: 'ring-end', id: ring.id });

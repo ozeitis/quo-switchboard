@@ -2,6 +2,8 @@
 
 ## Local validation — October 1, 2026
 
+Version 0.2.4: strict TypeScript checks, 11 unit tests, and all 17 desktop tests pass. New cases keep Quo's sidebar at 248 CSS pixels at 860, 1,040, and 1,512-point native window widths in both workspace-sidebar modes; preserve dyslexia and monospace fonts; isolate and restore workspace zoom; keep authentication at actual size; and bind native text-menu commands to their source workspace and frame. A controlled Mac preview confirms the real editing menu, Select All, native View → Zoom Out, ⌘0, expanded/compact layout, and physical clicks through the glass cutout. Both bundles pass strict code-signature verification; both DMGs pass checksum verification. The packaged Apple Silicon update restores the signed-in Quo inbox and collapsed sidebar from 0.2.3, and exposes the new native View controls. The first full run had one dialog-visibility timeout; the isolated case and full rerun passed. Its cause remains unconfirmed.
+
 Version 0.2.3: strict TypeScript checks, 10 unit tests, and all 14 desktop tests pass. Both bundles pass strict code-signature verification; both DMGs pass checksum verification. The native integration case verifies full page bounds after resizing and the actual viewport after selecting a background workspace. A controlled native preview confirms the top-left curve in both sidebar modes, removal of the extra right/bottom frame, workspace switching, and physical pointer clicks on a bottom-right page control through the decorative glass layer. The packaged Apple Silicon update restores the signed-in Quo inbox from 0.2.2; expanding and collapsing the sidebar works, with the saved compact mode retained. The initial viewport assertion inspected an inactive Chromium page before it became visible; the check now waits for the selected page's viewport to update.
 
 Version 0.2.2: 10 unit tests and all 14 desktop tests pass. Both bundles pass strict code-signature verification; both DMGs pass checksum verification. Native visual/click checks cover both sidebar modes, simultaneous “99+” and incoming-call indicators, switching, the smaller collapse/New/options controls, and canceling the creation sheet. The packaged Apple Silicon update restores the signed-in Quo inbox and collapsed sidebar from 0.2.1. The first suite run had one background-window visibility failure; an isolated rerun passed. The harness now waits for Electron's initial window to become visible, and a full rerun passed. The original transient failure's cause was not conclusively established.
@@ -16,7 +18,7 @@ Native click checks on macOS 27 covered name validation, create/cancel, edit wit
 
 `npm run check` checks strict TypeScript types and runs tests for URL policy, notification input handling, account ID validation, session partition identity, settings persistence, and preserving corrupt settings.
 
-`npm run test:desktop` starts real Electron processes with isolated temporary data directories and the explicit HTML test shell. A test-only protocol handler serves a controlled page at Quo’s origin. Native notification objects are observed through a test-only display stub. No credentials or real calls are involved. These tests exercise the shared command/session logic, not AppKit button clicks; native interaction is tested separately below.
+`npm run test:desktop` starts real Electron processes with isolated temporary data directories. A test-only bootstrap installs protocol handlers before the production entry point creates any views, including restored workspaces. It serves controlled Quo/authentication fixtures without contacting real Quo. Most cases use the explicit HTML test shell; layout and text-menu cases also use the native shell. Native notification objects are observed through a test-only display stub. No credentials or real calls are involved. These tests exercise the shared command/session logic, not AppKit button clicks; native interaction is tested separately below.
 
 Desktop coverage includes:
 
@@ -36,6 +38,9 @@ Desktop coverage includes:
 - Both page heartbeats continue after closing the main window.
 - Canceled creation/removal, renaming, reordering, and confirmed removal keep settings and views consistent.
 - A separate native-shell integration case checks compact-rail and resized-content bounds, unread/call state, notification routing while a native sheet is open, profile identity, and collapsed-state restoration. It still does not replace testing native button clicks.
+- Quo's navigation retains its full width at smaller native window sizes; Mac fonts can be disabled without affecting that width, and accessibility/code fonts remain intact.
+- Zoom is isolated per workspace and survives restart. Sign-in stays at actual size; the saved zoom returns after authentication.
+- Native text-menu editing targets its originating view and frame, including after another workspace becomes selected.
 
 These tests do not certify native notification delivery, Quo’s actual call interface, or a provider’s session policy.
 
@@ -58,6 +63,8 @@ SWITCHBOARD_TEST_DATA=/tmp/switchboard-native-review npm start
 - Open settings and health; controls work through macOS accessibility.
 - Resize/relaunch; controls retain position and Quo cannot cover the native sidebar or toolbar.
 - Collapse/expand; badges and call indicators remain visible, the page gains space, and the saved mode survives relaunch.
+- Resize with Quo's own navigation visible; verify labels remain readable and the conversation controls fit. Test View → Use Mac Fonts and ⌘+ / ⌘− / ⌘0 across workspaces.
+- Right-click a disposable draft. Test spelling suggestions, Undo/Redo, Select All, and normal clipboard commands; Quo's own application menus must remain usable.
 - Check light/dark appearance, Reduce Motion, Reduce Transparency, Increase Contrast, and VoiceOver on supported macOS versions.
 
 ## 24–48-hour idle acceptance

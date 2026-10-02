@@ -28,6 +28,16 @@ test('settings reject duplicate profile identifiers instead of sharing logins', 
   assert.throws(() => parseConfig({ ...emptyConfig(), version: 2 }));
   assert.throws(() => parseConfig({ ...emptyConfig(), accounts: [{ ...account, name: '\u0000hidden' }] }));
 });
+test('display settings preserve legacy profiles and reject invalid zoom values', () => {
+  const account = { id: '00000000-0000-4000-8000-000000000001', name: 'Studio', color: 'blue' };
+  const { macAppearance: _appearance, ...legacy } = emptyConfig();
+  const restored = parseConfig({ ...legacy, accounts: [account], activeId: account.id });
+  assert.equal(restored.macAppearance, true);
+  assert.equal(restored.accounts[0]?.id, account.id);
+  for (const zoom of [0, 0.49, 3.01, NaN, Infinity, '1']) assert.throws(() => parseConfig({ ...legacy, accounts: [{ ...account, zoom }] }));
+  assert.throws(() => parseConfig({ ...legacy, macAppearance: 'yes' }));
+  assert.equal(parseConfig({ ...legacy, macAppearance: false, accounts: [{ ...account, zoom: 0.9 }] }).accounts[0]?.zoom, 0.9);
+});
 test('removed active accounts fall back without retaining unknown settings', () => {
   const account = { id: '00000000-0000-4000-8000-000000000001', name: ' Studio ', color: 'blue' };
   const config = parseConfig({ ...emptyConfig(), activeId: 'missing', accounts: [account], injected: 'ignore' });

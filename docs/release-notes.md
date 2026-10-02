@@ -1,4 +1,11 @@
-Switchboard for Quo 0.2.3 — remove the extra content frame.
+Switchboard for Quo 0.2.4 — stable Quo navigation and better Mac interaction.
+
+- Quo's own sidebar stays at its full width across window sizes and workspace-sidebar modes.
+- Mac system typography in Quo's sidebar and main content. Dyslexia, code, handwriting, and emoji fonts remain intact; View → Use Mac Fonts switches back to Quo's fonts.
+- Native text context menus with spelling suggestions, editing, and copying links.
+- Per-workspace zoom with ⌘+ / ⌘− / ⌘0, retained across restart. Sign-in pages remain at actual size.
+
+Version 0.2.3 removed the extra content frame:
 
 - Quo extends to the window's right and bottom edges, removing the middle of three nested borders.
 - The top-left content curve remains. One masked native glass surface joins the sidebar and toolbar; page controls remain clickable through its cutout.

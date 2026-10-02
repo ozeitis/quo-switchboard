@@ -1,11 +1,11 @@
 import { test, expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { Notification as NativeNotification } from 'electron';
+import type { Menu as NativeMenu, Notification as NativeNotification } from 'electron';
 
 interface NativeRecord { notification: NativeNotification; title: string; body: string; subtitle: string; actions: string[] }
-type MainGlobal = typeof globalThis & { notificationRecords: NativeRecord[]; externalOrigins: string[] };
+type MainGlobal = typeof globalThis & { notificationRecords: NativeRecord[]; externalOrigins: string[]; textMenus: { menu: NativeMenu; frameURL?: string }[] };
 
 const fixture = `<!doctype html><html><head><title>Quo fixture</title></head><body>
 <h1>Quo test workspace</h1><button id="notify">Send notification</button><button id="ring">Simulate incoming call</button>
@@ -20,17 +20,30 @@ document.querySelector('#ring').onclick = () => {
 document.querySelector('#ambiguous').onclick = () => { const b = document.createElement('button'); b.setAttribute('aria-label', 'Answer call'); b.textContent = 'Another call'; document.querySelector('#call').append(b); };
 </script></body></html>`;
 
+const desktopFixture = fixture.replace('<head>', `<head><style>
+body { margin:0; display:flex; --body-font:Inter,sans-serif; --heading-font:Roobert,Inter,sans-serif; --code-font:monospace; }
+body.dyslexia { --body-font:OpenDyslexic,sans-serif; --heading-font:OpenDyslexic,sans-serif; }
+#sideMenu { width:248px; flex-shrink:0; font-family:var(--body-font); }
+@media(max-width:1399px) { #sideMenu { width:192px; } }
+main { flex:1; min-width:0; font-family:var(--body-font); }
+h1 { font-family:var(--heading-font); } code { font-family:var(--code-font); }
+</style>`).replace('<body>', '<body><aside id="sideMenu"><p>Search</p><p>Contacts</p></aside><main>')
+  .replace('<script>', '<textarea aria-label="Draft">Fixture draft</textarea><pre><code>monospace sample</code></pre><script>')
+  .replace('</body>', '</main></body>');
+
 let application: ElectronApplication;
 let window: Page;
 let dataDirectory: string;
 
-async function launch(directory: string, restoring = false, native = false): Promise<void> {
-  application = await _electron.launch({ args: [resolve('.')], env: { ...process.env, SWITCHBOARD_TEST_DATA: directory, SWITCHBOARD_TEST_SHELL: native ? 'native' : 'html' } });
+async function launch(directory: string, restoring = false, native = false, html = fixture): Promise<void> {
+  const fixturePath = join(directory, 'fixture.html');
+  await writeFile(fixturePath, html, { mode: 0o600 });
+  application = await _electron.launch({ args: [resolve('tests/desktop/bootstrap.cjs')], env: { ...process.env, SWITCHBOARD_TEST_DATA: directory, SWITCHBOARD_TEST_FIXTURE: fixturePath, SWITCHBOARD_TEST_SHELL: native ? 'native' : 'html' } });
   window = await application.firstWindow();
   if (!restoring) await expect(window.getByRole('button', { name: 'Add your first workspace' })).toBeVisible();
   // DOM visibility does not establish that Electron finished showing the window.
   await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(true);
-  await application.evaluate(({ app, Notification, webContents, shell }, html) => {
+  await application.evaluate(({ Notification, shell }) => {
     (globalThis as MainGlobal).notificationRecords = [];
     (globalThis as MainGlobal).externalOrigins = [];
     shell.openExternal = async url => { (globalThis as MainGlobal).externalOrigins.push(new URL(url).origin); };
@@ -39,23 +52,7 @@ async function launch(directory: string, restoring = false, native = false): Pro
       this.emit('show');
     };
     Notification.prototype.close = function () { this.emit('close'); };
-    const handled = new Set<Electron.Session>();
-    const attach = (contents: Electron.WebContents) => {
-      if (!handled.has(contents.session)) {
-        handled.add(contents.session);
-        contents.session.protocol.handle('https', request => {
-          const body = new URL(request.url).origin === 'https://signin.openphone.com'
-            ? '<!doctype html><h1>Quo sign-in fixture</h1><a href="https://my.quo.com/auth/authorize?code=fixture">Complete sign-in</a>'
-            : html;
-          return new Response(body, { headers: { 'Content-Type': 'text/html' } });
-        });
-      }
-    };
-    app.on('web-contents-created', (_event, contents) => attach(contents));
-    for (const contents of webContents.getAllWebContents()) {
-      if (contents.getURL().startsWith('https://my.quo.com')) { attach(contents); contents.reload(); }
-    }
-  }, fixture);
+  });
 }
 
 test.beforeEach(async () => {
@@ -83,6 +80,15 @@ async function add(name: string): Promise<Page> {
 
 async function notifications(): Promise<Omit<NativeRecord, 'notification'>[]> {
   return application.evaluate(() => (globalThis as MainGlobal).notificationRecords.map(({ title, body, subtitle, actions }) => ({ title, body, subtitle, actions })));
+}
+
+const shellCommand = (value: unknown) => window.evaluate(value => (window as unknown as { switchboard: { command(value: unknown): Promise<void> } }).switchboard.command(value), value);
+async function addNative(name: string): Promise<Page> {
+  const next = application.context().waitForEvent('page');
+  await shellCommand({ type: 'add', name, color: 'blue' });
+  const page = await next;
+  await expect(page.getByRole('heading', { name: 'Quo test workspace' })).toBeVisible();
+  return page;
 }
 
 test('the shell is accessible and workspace profiles isolate both cookies and local storage', async () => {
@@ -374,4 +380,88 @@ test('the native rail resizes retained views and keeps unread and call routing w
   await launch(dataDirectory, true, true);
   expect((await snapshot()).sidebarCollapsed).toBe(true);
   expect((await snapshot()).accounts.map(account => account.id)).toEqual(before.accounts.map(account => account.id));
+});
+
+test('Quo navigation keeps its width across native window sizes and Mac fonts preserve accessibility fonts', async () => {
+  await application.close();
+  await launch(dataDirectory, false, true, desktopFixture);
+  const page = await addNative('Studio');
+  for (const width of [860, 1040, 1512]) {
+    await application.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]!.setContentSize(width, 680), width);
+    for (let mode = 0; mode < 2; mode++) {
+      await expect.poll(() => page.locator('#sideMenu').evaluate(element => element.getBoundingClientRect().width)).toBe(248);
+      await expect(page.getByRole('button', { name: 'Simulate incoming call' })).toBeVisible();
+      await shellCommand({ type: 'toggle-sidebar' });
+    }
+  }
+  await expect.poll(() => page.locator('#sideMenu').evaluate(element => getComputedStyle(element).fontFamily)).toContain('-apple-system');
+  expect(await page.locator('code').evaluate(element => getComputedStyle(element).fontFamily)).toBe('monospace');
+  await shellCommand({ type: 'toggle-appearance' });
+  await expect.poll(() => page.locator('#sideMenu').evaluate(element => getComputedStyle(element).fontFamily)).toContain('Inter');
+  expect(await page.locator('#sideMenu').evaluate(element => element.getBoundingClientRect().width)).toBe(248);
+  await shellCommand({ type: 'toggle-appearance' });
+  await page.evaluate(() => document.body.classList.add('dyslexia'));
+  await expect.poll(() => page.locator('#sideMenu').evaluate(element => getComputedStyle(element).fontFamily)).toContain('OpenDyslexic');
+  await page.getByRole('button', { name: 'Simulate incoming call' }).click();
+  await expect.poll(async () => (await notifications()).length).toBeGreaterThan(0);
+  await page.getByRole('button', { name: 'Answer call' }).click();
+  await page.getByRole('button', { name: 'End call' }).click();
+});
+
+test('workspace zoom is isolated, survives restart, and leaves authentication at actual size', async () => {
+  const studio = await add('Studio');
+  await add('Workshop');
+  const config = JSON.parse(await readFile(join(dataDirectory, 'workspaces.json'), 'utf8'));
+  await shellCommand({ type: 'select', id: config.accounts[0].id });
+  await shellCommand({ type: 'zoom-out' });
+  const zooms = () => application.evaluate(({ webContents }) => webContents.getAllWebContents().filter(contents => contents.getURL().startsWith('https://my.quo.com')).map(contents => ({ path: contents.session.getStoragePath(), zoom: contents.getZoomFactor(), mode: contents.getZoomMode() })));
+  const initial = await zooms();
+  expect(initial.find(value => value.path?.includes(config.accounts[0].id))?.zoom).toBeCloseTo(0.9);
+  expect(initial.find(value => value.path?.includes(config.accounts[1].id))?.zoom).toBe(1);
+  expect(initial.every(value => value.mode === 'isolated')).toBe(true);
+  await studio.evaluate(() => { const input = document.createElement('input'); input.type = 'password'; input.autocomplete = 'current-password'; input.id = 'sign-in-fixture'; document.body.append(input); });
+  await expect.poll(async () => (await zooms()).find(value => value.path?.includes(config.accounts[0].id))?.zoom).toBe(1);
+  await studio.evaluate(() => document.getElementById('sign-in-fixture')!.remove());
+  await expect.poll(async () => (await zooms()).find(value => value.path?.includes(config.accounts[0].id))?.zoom).toBeCloseTo(0.9);
+  await studio.goto('https://signin.openphone.com/authorize?connection=email');
+  await expect(studio.getByRole('heading', { name: 'Quo sign-in fixture' })).toBeVisible();
+  const authZoom = await application.evaluate(({ webContents }) => webContents.getAllWebContents().find(contents => contents.getURL().startsWith('https://signin.openphone.com'))!.getZoomFactor());
+  expect(authZoom).toBe(1);
+  await studio.getByRole('link', { name: 'Complete sign-in' }).click();
+  await expect(studio.getByRole('heading', { name: 'Quo test workspace' })).toBeVisible();
+  // The controlled callback has no Quo router; finish its navigation explicitly.
+  await studio.goto('https://my.quo.com/inbox/fixture');
+  await expect.poll(async () => (await zooms()).find(value => value.path?.includes(config.accounts[0].id))?.zoom).toBeCloseTo(0.9);
+  await application.close();
+  await launch(dataDirectory, true);
+  await expect.poll(async () => (await zooms()).find(value => value.path?.includes(config.accounts[0].id))?.zoom).toBeCloseTo(0.9);
+  expect((await zooms()).find(value => value.path?.includes(config.accounts[1].id))?.zoom).toBe(1);
+  await shellCommand({ type: 'reset-zoom' });
+  await expect.poll(async () => (await zooms()).find(value => value.path?.includes(config.accounts[0].id))?.zoom).toBe(1);
+});
+
+test('native text menus bind their commands and frame to the workspace that opened them', async () => {
+  await application.close();
+  await launch(dataDirectory, false, true, desktopFixture);
+  await application.evaluate(({ Menu }) => {
+    (globalThis as MainGlobal).textMenus = [];
+    Menu.prototype.popup = function (options) { (globalThis as MainGlobal).textMenus.push({ menu: this, frameURL: options?.frame?.url }); };
+  });
+  const studio = await addNative('Studio');
+  await studio.getByRole('textbox', { name: 'Draft' }).fill('Studio draft');
+  await studio.getByRole('textbox', { name: 'Draft' }).click({ button: 'right' });
+  const record = await application.evaluate(() => {
+    const record = (globalThis as MainGlobal).textMenus.at(-1)!;
+    return { labels: record.menu.items.map(item => item.label), frameURL: record.frameURL };
+  });
+  expect(record.labels).toEqual(expect.arrayContaining(['Undo', 'Redo', 'Cut', 'Copy', 'Paste', 'Paste and Match Style', 'Select All']));
+  expect(record.frameURL).toBe('https://my.quo.com/');
+  const workshop = await addNative('Workshop');
+  await workshop.getByRole('textbox', { name: 'Draft' }).fill('Workshop draft');
+  await application.evaluate(({ BrowserWindow }) => {
+    const item = (globalThis as MainGlobal).textMenus[0]!.menu.items.find(item => item.label === 'Select All')!;
+    item.click(item, BrowserWindow.getAllWindows()[0], { shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, triggeredByAccelerator: false });
+  });
+  expect(await studio.getByRole('textbox', { name: 'Draft' }).evaluate(element => { const field = element as HTMLTextAreaElement; return field.selectionEnd - field.selectionStart; })).toBe('Studio draft'.length);
+  expect(await workshop.getByRole('textbox', { name: 'Draft' }).inputValue()).toBe('Workshop draft');
 });

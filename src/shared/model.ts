@@ -2,7 +2,7 @@ export const COLORS = ['slate', 'blue', 'green', 'amber', 'rose', 'violet'] as c
 export type Color = typeof COLORS[number];
 export type Status = 'loading' | 'ready' | 'sign-in' | 'offline' | 'error';
 
-export interface Account { id: string; name: string; color: Color }
+export interface Account { id: string; name: string; color: Color; zoom?: number }
 export interface Preferences {
   notifications: boolean;
   privateNotifications: boolean;
@@ -12,6 +12,7 @@ export interface Preferences {
 export interface Config {
   version: 1;
   sidebarCollapsed: boolean;
+  macAppearance: boolean;
   accounts: Account[];
   activeId: string | null;
   preferences: Preferences;
@@ -25,6 +26,7 @@ export interface AccountState extends Account {
 export interface Snapshot {
   nativeShell?: boolean;
   sidebarCollapsed?: boolean;
+  macAppearance?: boolean;
   accounts: AccountState[];
   activeId: string | null;
   preferences: Preferences;
@@ -37,7 +39,7 @@ export type ShellCommand =
   | { type: 'rename'; id: string; name: string; color: Color }
   | { type: 'preferences'; preferences: Preferences }
   | { type: 'overlay'; open: boolean }
-  | { type: 'open-help' | 'new-workspace' | 'settings' | 'health' | 'workspace-limit' | 'toggle-sidebar' };
+  | { type: 'open-help' | 'new-workspace' | 'settings' | 'health' | 'workspace-limit' | 'toggle-sidebar' | 'toggle-appearance' | 'zoom-in' | 'zoom-out' | 'reset-zoom' };
 export type AccountEvent =
   | { type: 'heartbeat' }
   | { type: 'notification'; id: string; title: string; body: string; tag: string; silent: boolean }
@@ -53,7 +55,10 @@ export const DEFAULT_PREFERENCES: Preferences = {
   experimentalAnswer: false,
   launchAtLogin: false
 };
-export const emptyConfig = (): Config => ({ version: 1, sidebarCollapsed: false, accounts: [], activeId: null, preferences: { ...DEFAULT_PREFERENCES } });
+export const emptyConfig = (): Config => ({ version: 1, sidebarCollapsed: false, macAppearance: true, accounts: [], activeId: null, preferences: { ...DEFAULT_PREFERENCES } });
+
+export const ZOOM_FACTORS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3] as const;
+export function validZoom(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value) && value >= 0.5 && value <= 3; }
 
 export function validId(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -71,16 +76,18 @@ export function validPreferences(value: unknown): value is Preferences {
 export function parseConfig(value: unknown): Config {
   if (!value || typeof value !== 'object') throw new Error('Invalid settings file');
   const v = value as Config;
-  if (v.version !== 1 || !Array.isArray(v.accounts) || v.accounts.length > 12 || !validPreferences(v.preferences)) throw new Error('Unsupported settings file');
+  if (v.version !== 1 || !Array.isArray(v.accounts) || v.accounts.length > 12 || !validPreferences(v.preferences)
+    || (v.macAppearance !== undefined && typeof v.macAppearance !== 'boolean')) throw new Error('Unsupported settings file');
   const seen = new Set<string>();
   for (const a of v.accounts) {
-    if (!a || !validId(a.id) || seen.has(a.id) || !validName(a.name) || !validColor(a.color)) throw new Error('Invalid workspace settings');
+    if (!a || !validId(a.id) || seen.has(a.id) || !validName(a.name) || !validColor(a.color) || (a.zoom !== undefined && !validZoom(a.zoom))) throw new Error('Invalid workspace settings');
     seen.add(a.id);
   }
   return {
     version: 1,
     sidebarCollapsed: v.sidebarCollapsed === true,
-    accounts: v.accounts.map(a => ({ id: a.id, name: a.name.trim(), color: a.color })),
+    macAppearance: v.macAppearance !== false,
+    accounts: v.accounts.map(a => ({ id: a.id, name: a.name.trim(), color: a.color, ...(a.zoom !== undefined ? { zoom: a.zoom } : {}) })),
     activeId: seen.has(v.activeId ?? '') ? v.activeId : v.accounts[0]?.id ?? null,
     preferences: Object.fromEntries(Object.keys(DEFAULT_PREFERENCES).map(k => [k, v.preferences[k as keyof Preferences]])) as unknown as Preferences
   };

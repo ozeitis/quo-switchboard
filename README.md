@@ -20,6 +20,8 @@ Switchboard gives each workspace its own saved browser session and keeps them ru
 - Preserve browser profiles across restarts and app updates.
 - Choose private notification previews, launch at login, and workspace names and colors.
 - Use native workspace sheets, context menus, keyboard selection, and macOS Liquid Glass controls.
+- Keep Quo's navigation at a stable width. Use Mac fonts and native editing menus inside the content area.
+- Adjust workspace zoom with **⌘+ / ⌘− / ⌘0**. Each workspace remembers its own size; authentication stays at actual size.
 - Recover failed pages with bounded retries and inspect a local connection-health report.
 
 **It does not bypass Quo’s session rules.** Saved profiles avoid losing local sign-ins unnecessarily; Quo can still expire or revoke them. Switchboard does not capture passwords, replay credentials, or run its own token-refresh loop.
@@ -50,7 +52,7 @@ Every workspace gets a persistent Chromium session and a retained `WebContentsVi
 | Build | esbuild 0.28.2 / electron-builder 26.15.3 | Bundled app, Apple Silicon and Intel DMGs |
 | Verification | Node tests / Playwright 1.63.0 | Security boundaries and actual desktop behavior |
 
-The sidebar, toolbar, and workspace/settings sheets are native AppKit. macOS 26 and 27 supply Liquid Glass through `NSGlassEffectView` and native glass buttons; older supported systems use native vibrancy. System appearance, accent colors, and accessibility preferences drive the controls. Quo’s conversation interface remains Quo’s web app. See [architecture and extension points](docs/architecture.md).
+The sidebar, toolbar, and workspace/settings sheets are native AppKit. macOS 26 and 27 supply Liquid Glass through `NSGlassEffectView` and native glass buttons; older supported systems use native vibrancy. System appearance, accent colors, and accessibility preferences drive the controls. Quo’s conversation interface remains Quo’s web app. A small presentation adapter stabilizes its sidebar and uses Mac fonts while preserving dyslexia, code, and emoji fonts. **View → Use Mac Fonts** restores Quo's typography when unchecked. See [architecture and extension points](docs/architecture.md).
 
 ## Install
 

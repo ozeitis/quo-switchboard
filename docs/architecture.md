@@ -25,7 +25,11 @@ The native bridge runs only in the main process. It owns AppKit views and sends 
 
 The sidebar collapses from 208 to 56 points. The same retained browser views gain the extra space; workspace initials, unread badges, call indicators, context menus, and notifications remain available. The preference survives relaunch. A brief native fade respects Reduce Motion. Secondary actions live in the options and system menus rather than a permanent row of sidebar buttons. The 52-point toolbar spans the window, with a single workspace title and small SF Symbol controls that show their native border on hover. Connection and call status appear when relevant. Shared geometry in `src/shared/layout.ts` keeps AppKit, Chromium, and the local renderer aligned.
 
-One `NSGlassEffectView` joins the sidebar and toolbar. A public QuartzCore shape mask cuts out the page area, retaining a 16-point curve at its top-left corner. The decorative material sits above Chromium and returns no hit-test target, so page controls remain reachable. Retained Quo views extend to the window's right and bottom edges; the native window owns the outer corners. There is no extra inset frame or injected stylesheet changing Quo's panels.
+One `NSGlassEffectView` joins the sidebar and toolbar. A public QuartzCore shape mask cuts out the page area, retaining a 16-point curve at its top-left corner. The decorative material sits above Chromium and returns no hit-test target, so page controls remain reachable. Retained Quo views extend to the window's right and bottom edges; the native window owns the outer corners. There is no extra inset frame.
+
+A sandboxed presentation adapter keeps Quo's `#sideMenu` at 248 CSS pixels instead of switching to 192 below its 1,400-pixel breakpoint. It discovers Inter/Roobert typography tokens from the surrounding theme and replaces them with the Mac system stack inside the sidebar and main content. Dyslexia, monospace, handwriting, and emoji tokens remain untouched. It does not replace controls, click handlers, routing, or call logic. Missing sidebar/token markers leave the corresponding presentation unchanged; Quo markup changes still require compatibility testing. The font preference can be disabled under View and survives restart.
+
+Native text menus provide spelling suggestions and editing commands. Each command captures its originating `WebContents`; the popup also receives Chromium's originating frame. Workspace zoom uses Electron 44's isolated zoom mode and a validated factor saved alongside the existing UUID. Changing zoom never replaces a profile. Authentication uses actual size, and the selected scale returns when the workspace is ready. Native controls around the webpage keep their normal size.
 
 Native table rows draw an inset selection inside the actual viewport; extra AppKit table gutters cannot clip its corners. Native toolbar controls and semantic system colors complete the macOS appearance. No private glass variants, method swizzling, or JavaScript imitation of glass is used. The native controls are included in the window's accessibility tree alongside Chromium. The HTML workspace UI remains available only as an explicit development/test fallback; packaged macOS builds require the native module.
 
@@ -101,6 +105,8 @@ No relay, API key storage, server, or paid subscription is part of this release.
 | --- | --- |
 | `src/main/index.ts` | App lifecycle, menus, IPC authorization, command routing |
 | `src/main/accounts.ts` | Profile isolation, navigation, permissions, views |
+| `src/main/text-menu.ts` | Native text menus bound to their originating browser view |
+| `src/preload/appearance.ts` | Scoped Quo navigation and typography adaptation |
 | `src/main/notifications.ts` | Native notifications and account-bound actions |
 | `src/main/store.ts` | Validated settings persistence |
 | `src/main/policy.ts` | URL policy, text normalization, rate limits |
@@ -121,6 +127,9 @@ No relay, API key storage, server, or paid subscription is part of this release.
 - [Node-API thread-safe callbacks](https://nodejs.org/api/n-api.html#asynchronous-thread-safe-function-calls)
 - [Electron security](https://www.electronjs.org/docs/latest/tutorial/security)
 - [Persistent sessions](https://www.electronjs.org/docs/latest/api/session)
+- [Isolated workspace zoom](https://www.electronjs.org/docs/latest/api/web-contents#contentssetzoommodemode)
+- [Frame-aware native menus](https://www.electronjs.org/docs/latest/api/menu#menupopupoptions)
+- [Sandboxed presentation styles](https://www.electronjs.org/docs/latest/api/web-frame#webframeinsertcsscss-options)
 - [Native notifications](https://www.electronjs.org/docs/latest/api/notification)
 - [Quo session policy](https://support.quo.com/core-concepts/account/account-security)
 - [Quo API capabilities](https://www.quo.com/docs/2026-03-30/introduction)

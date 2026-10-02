@@ -9,7 +9,7 @@ import { Store } from './store';
 import { NativeShell } from './native-shell';
 import { Health } from './health';
 import { WindowState } from './window-state';
-import { validColor, validId, validName, validPreferences, type ShellCommand, type Snapshot } from '../shared/model';
+import { validColor, validId, validName, validPreferences, ZOOM_FACTORS, type ShellCommand, type Snapshot } from '../shared/model';
 import { SHELL_LAYOUT } from '../shared/layout';
 
 app.setName('Switchboard');
@@ -40,6 +40,7 @@ function snapshot(): Snapshot {
   return {
     nativeShell: !!nativeShell,
     sidebarCollapsed: store.value.sidebarCollapsed,
+    macAppearance: store.value.macAppearance,
     accounts: store.value.accounts.map(account => accounts.entries.get(account.id)?.state ?? { ...account, status: 'loading', unread: 0, ringing: false, inCall: false }),
     activeId: store.value.activeId,
     preferences: store.value.preferences,
@@ -100,6 +101,9 @@ function layoutWorkspaces(): void {
 }
 
 function refreshMenus(): void {
+  const active = store.value.activeId ? accounts.entries.get(store.value.activeId) : undefined;
+  const zoom = active?.state.zoom ?? 1;
+  const canZoom = !!active && ['ready', 'offline'].includes(active.state.status) && appOrigin(active.view.webContents.getURL());
   const workspaceItems: MenuItemConstructorOptions[] = store.value.accounts.map((account, index) => ({
     label: account.name, type: 'radio', checked: account.id === store.value.activeId,
     accelerator: index < 9 ? `CommandOrControl+${index + 1}` : undefined,
@@ -119,6 +123,12 @@ function refreshMenus(): void {
     { role: 'editMenu' },
     { label: 'View', submenu: [
       ...(nativeShell ? [{ label: store.value.sidebarCollapsed ? 'Expand workspace sidebar' : 'Collapse workspace sidebar', accelerator: 'CommandOrControl+Shift+L', click: () => { void command({ type: 'toggle-sidebar' }); } }] : []),
+      { label: 'Use Mac Fonts', type: 'checkbox', checked: store.value.macAppearance, click: () => { void command({ type: 'toggle-appearance' }); } },
+      { type: 'separator' },
+      { label: 'Zoom In', accelerator: 'CommandOrControl+Plus', enabled: canZoom && zoom < 3, click: () => { void command({ type: 'zoom-in' }); } },
+      { label: 'Zoom Out', accelerator: 'CommandOrControl+-', enabled: canZoom && zoom > 0.5, click: () => { void command({ type: 'zoom-out' }); } },
+      { label: 'Actual Size', accelerator: 'CommandOrControl+0', enabled: canZoom && zoom !== 1, click: () => { void command({ type: 'reset-zoom' }); } },
+      { type: 'separator' },
       { label: 'Show Switchboard', click: show }, { role: 'togglefullscreen' },
       ...(!app.isPackaged ? [{ label: 'Inspect workspace', accelerator: 'CommandOrControl+Alt+I', click: () => { const id = store.value.activeId; if (id) accounts.entries.get(id)?.view.webContents.openDevTools({ mode: 'detach' }); } }] : [])
     ] },
@@ -147,6 +157,26 @@ async function command(value: unknown): Promise<void> {
   const cmd = value as ShellCommand;
   switch (cmd.type) {
     case 'toggle-sidebar': store.save({ ...store.value, sidebarCollapsed: !store.value.sidebarCollapsed }); break;
+    case 'toggle-appearance': {
+      store.save({ ...store.value, macAppearance: !store.value.macAppearance });
+      for (const entry of accounts.entries.values()) if (appOrigin(entry.view.webContents.getURL())) entry.view.webContents.send('account:appearance', store.value.macAppearance);
+      break;
+    }
+    case 'zoom-in':
+    case 'zoom-out':
+    case 'reset-zoom': {
+      const id = store.value.activeId;
+      const entry = id ? accounts.entries.get(id) : undefined;
+      if (!entry || !['ready', 'offline'].includes(entry.state.status) || !appOrigin(entry.view.webContents.getURL())) break;
+      const current = entry.state.zoom ?? 1;
+      const zoom = cmd.type === 'reset-zoom' ? 1 : cmd.type === 'zoom-in'
+        ? ZOOM_FACTORS.find(value => value > current) ?? 3
+        : [...ZOOM_FACTORS].reverse().find(value => value < current) ?? 0.5;
+      store.save({ ...store.value, accounts: store.value.accounts.map(account => account.id === id ? { ...account, zoom } : account) });
+      entry.state.zoom = zoom;
+      entry.view.webContents.setZoomFactor(zoom);
+      break;
+    }
     case 'new-workspace': intent('add'); break;
     case 'settings': intent('settings'); break;
     case 'health': {
@@ -248,7 +278,7 @@ if (gotLock) void app.whenReady().then(async () => {
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   health = new Health(app.getPath('userData'));
-  accounts = new Accounts(window, publish, id => notifications?.reset(id), health);
+  accounts = new Accounts(window, publish, id => notifications?.reset(id), health, () => store.value.macAppearance);
   notifications = new Notifications(window, accounts, () => store.value.preferences, select, () => { notificationError = true; publish(); });
 
   ipcMain.handle('shell:snapshot', event => { assertShell(event); return snapshot(); });
@@ -276,6 +306,7 @@ if (gotLock) void app.whenReady().then(async () => {
         if (!['ready', 'sign-in', 'offline'].includes(String(data.status)) || typeof data.inCall !== 'boolean' || typeof data.unread !== 'number' || !Number.isInteger(data.unread)) return;
         if (entry.state.status !== data.status) health.record(data.status as 'ready' | 'sign-in' | 'offline', accountId);
         entry.state.status = data.status as 'ready' | 'sign-in' | 'offline';
+        accounts.applyZoom(entry);
         entry.state.unread = Math.max(0, Math.min(data.unread, 9999));
         entry.state.inCall = data.inCall;
         publish();
