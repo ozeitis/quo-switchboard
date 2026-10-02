@@ -125,6 +125,8 @@ Outputs are in `release/`. Icons are checked in; regenerate them with `swift scr
 
 Development uses a separate `Switchboard Development` profile directory. Packaged releases keep their profiles under `Switchboard`.
 
+Dependencies and pinned GitHub Actions are checked daily. Updates merge only after Mac tests, dependency auditing, and secret scanning pass on the current revision. [Maintenance policy and setup](docs/dependencies.md).
+
 ## Known boundaries
 
 | Area | Current behavior |

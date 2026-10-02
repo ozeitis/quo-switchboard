@@ -1,0 +1,34 @@
+name: Dependency maintenance
+on:
+  workflow_run:
+    workflows: [Checks]
+    types: [completed]
+  schedule:
+    - cron: "43 16 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: dependency-maintenance
+  cancel-in-progress: false
+jobs:
+  merge:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      # Run policy from the default branch. Never check out or execute PR code here.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { mergeDependencyUpdates } = require(`${process.env.GITHUB_WORKSPACE}/scripts/dependency-maintenance.cjs`);
+            await mergeDependencyUpdates({ github, context, core });
