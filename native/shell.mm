@@ -116,9 +116,9 @@ static NSColor *color(NSString *name) {
 @property NSView *chrome;
 @property NSView *sidebar;
 @property NSView *toolbar;
+@property NSDictionary *layout;
 @property NSTableView *table;
 @property NSTextField *title;
-@property NSTextField *subtitle;
 @property NSButton *collapse;
 @property NSScrollView *scroll;
 @property NSTextField *heading;
@@ -143,37 +143,44 @@ static NSColor *color(NSString *name) {
 - (NSButton *)button:(NSString *)title symbol:(NSString *)symbol frame:(NSRect)frame action:(SEL)action parent:(NSView *)parent {
   NSButton *button = [NSButton buttonWithTitle:title target:self action:action];
   button.frame = frame;
-  if (@available(macOS 26.0, *)) button.bezelStyle = NSBezelStyleGlass;
-  else button.bezelStyle = NSBezelStyleTexturedRounded;
+  button.bezelStyle = NSBezelStyleToolbar;
+  button.showsBorderOnlyWhileMouseInside = YES;
+  button.controlSize = NSControlSizeSmall;
   button.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
+  button.symbolConfiguration = [NSImageSymbolConfiguration configurationWithPointSize:15 weight:NSFontWeightRegular];
+  button.imageScaling = NSImageScaleNone;
   button.imagePosition = title.length ? NSImageLeading : NSImageOnly;
   [parent addSubview:button];
   return button;
 }
-- (instancetype)initWithView:(NSView *)handle callback:(napi_threadsafe_function)callback {
+- (instancetype)initWithView:(NSView *)handle layout:(NSDictionary *)layout callback:(napi_threadsafe_function)callback {
   if (!(self = [super init])) return nil;
   _window = handle.window;
   _callback = callback;
+  _layout = layout;
   _accounts = @[];
   NSView *host = _window.contentView;
   _host = host;
   _window.movableByWindowBackground = YES;
   _window.autorecalculatesKeyViewLoop = YES;
   CGFloat width = host.bounds.size.width, height = host.bounds.size.height;
+  CGFloat sidebarWidth = [layout[@"sidebarWidth"] doubleValue];
+  CGFloat toolbarHeight = [layout[@"toolbarHeight"] doubleValue];
+  CGFloat rowHeight = [layout[@"rowHeight"] doubleValue];
   // One material across the window avoids a glass edge at the toolbar junction.
   _chrome = material(host.bounds, [[FlippedView alloc] initWithFrame:host.bounds]);
   _chrome.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
   _chrome.accessibilityElement = NO;
   [host addSubview:_chrome positioned:NSWindowBelow relativeTo:nil];
-  FlippedView *side = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, 224, height)];
+  FlippedView *side = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, sidebarWidth, height)];
   _sidebar = side;
   _sidebar.autoresizingMask = NSViewHeightSizable;
   [host addSubview:_sidebar positioned:NSWindowAbove relativeTo:nil];
-  _heading = label(@"Workspaces", NSMakeRect(22, 73, 180, 18), 11);
+  _heading = label(@"Workspaces", NSMakeRect(16, toolbarHeight + 12, sidebarWidth - 32, 18), 11);
   _heading.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
   _heading.textColor = NSColor.secondaryLabelColor;
   [side addSubview:_heading];
-  NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(8, 103, 208, MAX(100, height - 119))];
+  NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(8, toolbarHeight + 38, sidebarWidth - 16, MAX(100, height - toolbarHeight - 54))];
   _scroll = scroll;
   scroll.autoresizingMask = NSViewHeightSizable;
   scroll.hasVerticalScroller = YES;
@@ -186,8 +193,8 @@ static NSColor *color(NSString *name) {
   _table.backgroundColor = NSColor.clearColor;
   // The row supplies its own inset. Keep AppKit's extra gutters out of its width.
   _table.style = NSTableViewStylePlain;
-  _table.rowHeight = 52;
-  _table.intercellSpacing = NSMakeSize(0, 4);
+  _table.rowHeight = rowHeight;
+  _table.intercellSpacing = NSMakeSize(0, 2);
   _table.allowsEmptySelection = NO;
   _table.allowsMultipleSelection = NO;
   _table.dataSource = self;
@@ -195,7 +202,7 @@ static NSColor *color(NSString *name) {
   _table.accessibilityLabel = @"Workspaces";
   NSTableColumn *column = [[NSTableColumn alloc] initWithIdentifier:@"workspace"];
   column.minWidth = 0;
-  column.width = 208;
+  column.width = sidebarWidth - 16;
   [_table addTableColumn:column];
   scroll.documentView = _table;
   NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Workspace"];
@@ -203,27 +210,23 @@ static NSColor *color(NSString *name) {
   _table.menu = menu;
   [side addSubview:scroll];
 
-  FlippedView *bar = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, width - 224, 64)];
+  FlippedView *bar = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, width, toolbarHeight)];
   _toolbar = bar;
-  _toolbar.frame = NSMakeRect(224, height - 64, width - 224, 64);
+  _toolbar.frame = NSMakeRect(0, height - toolbarHeight, width, toolbarHeight);
   _toolbar.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
   [host addSubview:_toolbar positioned:NSWindowAbove relativeTo:nil];
-  _title = label(@"Switchboard", NSMakeRect(58, 11, width - 416, 22), 14);
-  _title.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
+  _title = label(@"Switchboard", NSMakeRect(sidebarWidth + 12, (toolbarHeight - 20) / 2, width - sidebarWidth - 116, 20), 13);
+  _title.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
   _title.autoresizingMask = NSViewWidthSizable;
   [bar addSubview:_title];
-  _subtitle = label(@"Your Quo workspaces, together", NSMakeRect(58, 34, width - 416, 18), 11);
-  _subtitle.textColor = NSColor.secondaryLabelColor;
-  _subtitle.autoresizingMask = NSViewWidthSizable;
-  [bar addSubview:_subtitle];
-  _collapse = [self button:@"" symbol:@"sidebar.left" frame:NSMakeRect(12, 18, 32, 28) action:@selector(toggleSidebar:) parent:bar];
+  _collapse = [self button:@"" symbol:@"sidebar.left" frame:NSMakeRect(88, (toolbarHeight - 28) / 2, 28, 28) action:@selector(toggleSidebar:) parent:bar];
   _collapse.toolTip = @"Collapse sidebar (⌘⇧L)";
   _collapse.accessibilityLabel = @"Collapse sidebar";
-  _add = [self button:@"" symbol:@"plus" frame:NSMakeRect(width - 315, 18, 32, 28) action:@selector(addWorkspace:) parent:bar];
+  _add = [self button:@"" symbol:@"plus" frame:NSMakeRect(width - 80, (toolbarHeight - 28) / 2, 28, 28) action:@selector(addWorkspace:) parent:bar];
   _add.autoresizingMask = NSViewMinXMargin;
   _add.toolTip = @"New workspace (⌘N)";
   _add.accessibilityLabel = @"New workspace";
-  _more = [self button:@"" symbol:@"ellipsis.circle" frame:NSMakeRect(width - 273, 18, 32, 28) action:@selector(more:) parent:bar];
+  _more = [self button:@"" symbol:@"ellipsis" frame:NSMakeRect(width - 44, (toolbarHeight - 28) / 2, 28, 28) action:@selector(more:) parent:bar];
   _more.autoresizingMask = NSViewMinXMargin;
   _more.toolTip = @"Workspace options";
   _more.accessibilityLabel = @"Workspace options";
@@ -255,12 +258,16 @@ static NSColor *color(NSString *name) {
   _updating = YES;
   BOOL collapseChanged = _collapsed != [snapshot[@"sidebarCollapsed"] boolValue];
   _collapsed = [snapshot[@"sidebarCollapsed"] boolValue];
-  CGFloat inset = _collapsed ? 80 : 224;
+  CGFloat inset = [_layout[_collapsed ? @"railWidth" : @"sidebarWidth"] doubleValue];
+  CGFloat toolbarHeight = [_layout[@"toolbarHeight"] doubleValue];
   CGFloat width = _host.bounds.size.width, height = _host.bounds.size.height;
   _sidebar.frame = NSMakeRect(0, 0, inset, height);
-  _toolbar.frame = NSMakeRect(inset, height - 64, width - inset, 64);
+  _toolbar.frame = NSMakeRect(0, height - toolbarHeight, width, toolbarHeight);
+  CGFloat titleX = MAX(inset + 12, 128);
+  _title.frame = NSMakeRect(titleX, (toolbarHeight - 20) / 2, MAX(100, width - titleX - 104), 20);
   _heading.hidden = _collapsed;
-  _scroll.frame = NSMakeRect(8, _collapsed ? 72 : 103, inset - 16, MAX(100, height - (_collapsed ? 88 : 119)));
+  CGFloat listTop = toolbarHeight + (_collapsed ? 8 : 38);
+  _scroll.frame = NSMakeRect(8, listTop, inset - 16, MAX(100, height - listTop - 8));
   _table.tableColumns.firstObject.width = _scroll.contentSize.width;
   [_table sizeToFit];
   _collapse.accessibilityLabel = _collapsed ? @"Expand sidebar" : @"Collapse sidebar";
@@ -276,8 +283,9 @@ static NSColor *color(NSString *name) {
     else [_table deselectAll:nil];
   }
   NSDictionary *active = selected >= 0 ? _accounts[selected] : nil;
-  _title.stringValue = active[@"name"] ?: @"Switchboard";
-  _subtitle.stringValue = active ? status(active) : @"Your Quo workspaces, together";
+  BOOL showStatus = active && (![active[@"status"] isEqual:@"ready"] || [active[@"inCall"] boolValue] || [active[@"ringing"] boolValue]);
+  _title.stringValue = showStatus ? [NSString stringWithFormat:@"%@ — %@", active[@"name"], status(active)] : active[@"name"] ?: @"Switchboard";
+  _title.toolTip = active ? status(active) : nil;
   _more.enabled = YES;
   _add.enabled = _accounts.count < 12;
   _updating = NO;
@@ -293,16 +301,20 @@ static NSColor *color(NSString *name) {
 - (NSTableRowView *)tableView:(NSTableView *)table rowViewForRow:(NSInteger)row { return [[WorkspaceRow alloc] init]; }
 - (NSView *)tableView:(NSTableView *)table viewForTableColumn:(NSTableColumn *)column row:(NSInteger)row {
   NSDictionary *account = _accounts[row];
-  WorkspaceCell *cell = [[WorkspaceCell alloc] initWithFrame:NSMakeRect(0, 0, column.width, 52)];
-  WorkspaceAvatar *avatar = [[WorkspaceAvatar alloc] initWithFrame:NSMakeRect(_collapsed ? (column.width - 28) / 2 : 8, 13, 28, 28)];
+  CGFloat rowHeight = [_layout[@"rowHeight"] doubleValue];
+  WorkspaceCell *cell = [[WorkspaceCell alloc] initWithFrame:NSMakeRect(0, 0, column.width, rowHeight)];
+  WorkspaceAvatar *avatar = [[WorkspaceAvatar alloc] initWithFrame:NSMakeRect(_collapsed ? (column.width - 28) / 2 : 8, (rowHeight - 28) / 2, 28, 28)];
   avatar.account = account;
   [cell addSubview:avatar];
   if (!_collapsed) {
-    NSTextField *name = label(account[@"name"], NSMakeRect(43, 28, 118, 18), 13);
+    BOOL showDetail = ![account[@"status"] isEqual:@"ready"] || [account[@"inCall"] boolValue] || [account[@"ringing"] boolValue];
+    CGFloat nameWidth = column.width - 43 - ([account[@"unread"] integerValue] ? 33 : 8);
+    NSTextField *name = label(account[@"name"], NSMakeRect(43, showDetail ? 26 : (rowHeight - 18) / 2, nameWidth, 18), 13);
     [cell addSubview:name];
     cell.textField = name;
     name.font = [NSFont systemFontOfSize:13 weight:[account[@"id"] isEqual:_snapshot[@"activeId"]] ? NSFontWeightSemibold : NSFontWeightRegular];
-    cell.detail = label(status(account), NSMakeRect(43, 10, 140, 16), 10);
+    cell.detail = label(status(account), NSMakeRect(43, 9, column.width - 51, 16), 10);
+    cell.detail.hidden = !showDetail;
     cell.detail.textColor = NSColor.secondaryLabelColor;
     [cell addSubview:cell.detail];
   }
@@ -310,12 +322,12 @@ static NSColor *color(NSString *name) {
   BOOL calling = [account[@"ringing"] boolValue] || [account[@"inCall"] boolValue];
   if (count) {
     CGFloat badgeWidth = count > 99 ? 25 : 20;
-    WorkspaceBadge *badge = [[WorkspaceBadge alloc] initWithFrame:NSMakeRect(column.width - badgeWidth - 4, _collapsed ? 34 : 29, badgeWidth, 15)];
+    WorkspaceBadge *badge = [[WorkspaceBadge alloc] initWithFrame:NSMakeRect(column.width - badgeWidth, _collapsed ? rowHeight - 17 : rowHeight - 19, badgeWidth, 15)];
     badge.text = count > 99 ? @"99+" : [NSString stringWithFormat:@"%ld", (long)count];
     [cell addSubview:badge];
   }
   if (calling) {
-    WorkspaceBadge *call = [[WorkspaceBadge alloc] initWithFrame:NSMakeRect(_collapsed ? NSMaxX(avatar.frame) - 9 : 27, 8, 15, 15)];
+    WorkspaceBadge *call = [[WorkspaceBadge alloc] initWithFrame:NSMakeRect(_collapsed ? NSMaxX(avatar.frame) - 9 : 27, 5, 15, 15)];
     call.calling = YES;
     [cell addSubview:call];
   }
@@ -497,22 +509,29 @@ static NSString *stringArgument(napi_env env, napi_value value) {
   return [[NSString alloc] initWithBytes:data.data() length:length encoding:NSUTF8StringEncoding];
 }
 static napi_value attach(napi_env env, napi_callback_info info) {
-  size_t count = 2, length = 0;
-  napi_value args[2];
+  size_t count = 3, length = 0;
+  napi_value args[3];
   napi_get_cb_info(env, info, &count, args, nullptr, nullptr);
   void *bytes = nullptr;
   napi_valuetype callbackType;
-  if (count != 2 || napi_get_buffer_info(env, args[0], &bytes, &length) != napi_ok || length != sizeof(void *) || napi_typeof(env, args[1], &callbackType) != napi_ok || callbackType != napi_function || !NSThread.isMainThread) {
+  if (count != 3 || napi_get_buffer_info(env, args[0], &bytes, &length) != napi_ok || length != sizeof(void *) || napi_typeof(env, args[2], &callbackType) != napi_ok || callbackType != napi_function || !NSThread.isMainThread) {
     napi_throw_error(env, nullptr, "Native shell requires an NSView handle and a callback on the main thread"); return nullptr;
+  }
+  NSString *json = stringArgument(env, args[1]);
+  NSDictionary *layout = json ? [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil] : nil;
+  if (![layout isKindOfClass:NSDictionary.class]) { napi_throw_error(env, nullptr, "Native shell requires layout metrics"); return nullptr; }
+  for (NSString *key in @[@"sidebarWidth", @"railWidth", @"toolbarHeight", @"rowHeight"]) {
+    NSNumber *value = layout[key];
+    if (![value isKindOfClass:NSNumber.class] || !(value.doubleValue >= 24 && value.doubleValue <= 512)) { napi_throw_error(env, nullptr, "Invalid native layout metric"); return nullptr; }
   }
   [controller dispose];
   napi_threadsafe_function callback;
   napi_value resource;
   napi_create_string_utf8(env, "Switchboard AppKit actions", NAPI_AUTO_LENGTH, &resource);
-  if (napi_create_threadsafe_function(env, args[1], nullptr, resource, 64, 1, nullptr, nullptr, nullptr, deliver, &callback) != napi_ok) return nullptr;
+  if (napi_create_threadsafe_function(env, args[2], nullptr, resource, 64, 1, nullptr, nullptr, nullptr, deliver, &callback) != napi_ok) return nullptr;
   napi_unref_threadsafe_function(env, callback);
   NSView *view = (__bridge NSView *)*(void **)bytes;
-  controller = [[ShellController alloc] initWithView:view callback:callback];
+  controller = [[ShellController alloc] initWithView:view layout:layout callback:callback];
   return nullptr;
 }
 static napi_value update(napi_env env, napi_callback_info info) {

@@ -1,4 +1,10 @@
-Switchboard for Quo 0.2.1 — continuous window chrome and rounded content.
+Switchboard for Quo 0.2.2 — tighter spacing and quiet native controls.
+
+- A 56-point compact workspace rail, a 208-point expanded sidebar, and a 52-point single-line toolbar.
+- Small SF Symbol buttons with native hover feedback. Healthy workspaces no longer repeat “Workspace loaded” in the toolbar and rows.
+- Shared layout metrics keep native controls, rounded Quo views, and loading/error surfaces aligned.
+
+Version 0.2.1 refined the window geometry:
 
 - One native glass surface joins the sidebar and toolbar without a vertical seam.
 - Rounded Quo content with a narrow outer gutter. Workspace selections fit within the rail and keep both corners visible.

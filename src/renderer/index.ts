@@ -1,4 +1,13 @@
 import { COLORS, type AccountState, type Color, type Preferences, type ShellCommand, type Snapshot } from '../shared/model';
+import { SHELL_LAYOUT } from '../shared/layout';
+
+for (const [property, value] of Object.entries({
+  '--native-sidebar-width': SHELL_LAYOUT.sidebarWidth,
+  '--native-rail-width': SHELL_LAYOUT.railWidth,
+  '--native-toolbar-height': SHELL_LAYOUT.toolbarHeight,
+  '--native-content-gutter': SHELL_LAYOUT.contentGutter,
+  '--native-content-radius': SHELL_LAYOUT.contentRadius
+})) document.documentElement.style.setProperty(property, `${value}px`);
 
 declare global {
   interface Window {

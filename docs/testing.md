@@ -2,6 +2,8 @@
 
 ## Local validation — October 1, 2026
 
+Version 0.2.2: 10 unit tests and all 14 desktop tests pass. Both bundles pass strict code-signature verification; both DMGs pass checksum verification. Native visual/click checks cover both sidebar modes, simultaneous “99+” and incoming-call indicators, switching, the smaller collapse/New/options controls, and canceling the creation sheet. The packaged Apple Silicon update restores the signed-in Quo inbox and collapsed sidebar from 0.2.1. The first suite run had one background-window visibility failure; an isolated rerun passed. The harness now waits for Electron's initial window to become visible, and a full rerun passed. The original transient failure's cause was not conclusively established.
+
 Version 0.2.1: the same 24 tests pass, including retained-view bounds after expanding and resizing to the minimum window size. Both bundles pass strict code-signature verification; both DMGs pass checksum verification. Native visual checks confirm a continuous sidebar/toolbar surface, rounded content corners, and fully rounded selections in both sidebar modes. Switching, opening the native creation sheet, and canceling remain functional. The packaged Apple Silicon update restores the signed-in Quo inbox and collapsed sidebar from 0.2.0.
 
 Version 0.2.0: 10 unit tests and 14 Electron desktop tests pass. Both architecture bundles pass strict code-signature verification, and both DMGs pass disk-image checksum verification. The Apple Silicon packaged build loads the native module, restores the existing signed-in Quo inbox after upgrading from 0.1.1, and records page heartbeats locally.

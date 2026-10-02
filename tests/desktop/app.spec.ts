@@ -28,6 +28,8 @@ async function launch(directory: string, restoring = false, native = false): Pro
   application = await _electron.launch({ args: [resolve('.')], env: { ...process.env, SWITCHBOARD_TEST_DATA: directory, SWITCHBOARD_TEST_SHELL: native ? 'native' : 'html' } });
   window = await application.firstWindow();
   if (!restoring) await expect(window.getByRole('button', { name: 'Add your first workspace' })).toBeVisible();
+  // DOM visibility does not establish that Electron finished showing the window.
+  await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(true);
   await application.evaluate(({ app, Notification, webContents, shell }, html) => {
     (globalThis as MainGlobal).notificationRecords = [];
     (globalThis as MainGlobal).externalOrigins = [];
@@ -344,14 +346,14 @@ test('the native rail resizes retained views and keeps unread and call routing w
   await expect.poll(async () => (await snapshot()).accounts[0]?.unread).toBe(7);
   const bounds = await application.evaluate(({ BrowserWindow, WebContentsView }) => BrowserWindow.getAllWindows()[0]!.contentView.children.filter(view => view instanceof WebContentsView && view.webContents.getURL().startsWith('https://my.quo.com')).map(view => view.getBounds()));
   expect(bounds).toHaveLength(2);
-  expect(bounds.every(bound => bound.x === 80)).toBe(true);
+  expect(bounds.every(bound => bound.x === 56 && bound.y === 52)).toBe(true);
   await command({ type: 'toggle-sidebar' });
   const resized = await application.evaluate(({ BrowserWindow, WebContentsView }) => {
     const host = BrowserWindow.getAllWindows()[0]!;
     host.setContentSize(860, 580);
     return { size: host.getContentSize(), bounds: host.contentView.children.filter(view => view instanceof WebContentsView && view.webContents.getURL().startsWith('https://my.quo.com')).map(view => view.getBounds()) };
   });
-  expect(resized.bounds.every(bound => bound.x === 224 && bound.y === 64 && bound.width === resized.size[0]! - 232 && bound.height === resized.size[1]! - 72)).toBe(true);
+  expect(resized.bounds.every(bound => bound.x === 208 && bound.y === 52 && bound.width === resized.size[0]! - 216 && bound.height === resized.size[1]! - 60)).toBe(true);
   await command({ type: 'toggle-sidebar' });
   await studio.evaluate(() => document.getElementById('ring')!.click());
   await expect.poll(async () => (await notifications()).length).toBeGreaterThan(0);

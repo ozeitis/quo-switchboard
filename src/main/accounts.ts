@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { appOrigin, accountNavigation, externalURL } from './policy';
 import { partitionFor, type Account, type AccountState } from '../shared/model';
 import { Health, RecoveryBudget } from './health';
+import { SHELL_LAYOUT } from '../shared/layout';
 
 export interface LiveAccount {
   state: AccountState;
@@ -40,7 +41,7 @@ export class Accounts {
       backgroundThrottling: false, spellcheck: true, autoplayPolicy: 'no-user-gesture-required'
     } });
     view.setBackgroundColor('#ffffff');
-    view.setBorderRadius(16);
+    view.setBorderRadius(SHELL_LAYOUT.contentRadius);
     const entry: LiveAccount = { state: { ...account, status: 'loading', unread: 0, ringing: false, inCall: false }, view, ringId: null, recovery: new RecoveryBudget() };
     this.entries.set(account.id, entry);
     this.window.contentView.addChildView(view);
@@ -114,12 +115,12 @@ export class Accounts {
     await shell.openExternal(url).catch(() => undefined);
   }
 
-  layout(activeId: string | null, overlay: boolean, sidebarWidth = 224): void {
+  layout(activeId: string | null, overlay: boolean, sidebarWidth = 224, toolbarHeight = 64): void {
     const [width = 1200, height = 800] = this.window.getContentSize();
     for (const [id, entry] of this.entries) {
       // Keep the renderer alive. Switching workspaces must not recreate a session.
       entry.view.setVisible(id === activeId && !overlay && entry.state.status !== 'error' && entry.state.status !== 'loading');
-      entry.view.setBounds({ x: sidebarWidth, y: 64, width: Math.max(0, width - sidebarWidth - 8), height: Math.max(0, height - 72) });
+      entry.view.setBounds({ x: sidebarWidth, y: toolbarHeight, width: Math.max(0, width - sidebarWidth - SHELL_LAYOUT.contentGutter), height: Math.max(0, height - toolbarHeight - SHELL_LAYOUT.contentGutter) });
     }
   }
 

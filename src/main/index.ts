@@ -10,6 +10,7 @@ import { NativeShell } from './native-shell';
 import { Health } from './health';
 import { WindowState } from './window-state';
 import { validColor, validId, validName, validPreferences, type ShellCommand, type Snapshot } from '../shared/model';
+import { SHELL_LAYOUT } from '../shared/layout';
 
 app.setName('Switchboard');
 app.setPath('userData', !app.isPackaged && process.env.SWITCHBOARD_TEST_DATA
@@ -79,7 +80,7 @@ function intent(value: string): void {
 
 function publish(): void {
   if (!accounts || !store || !window || window.isDestroyed()) return;
-  accounts.layout(store.value.activeId, overlay, nativeShell && store.value.sidebarCollapsed ? 80 : 224);
+  layoutWorkspaces();
   const state = snapshot();
   nativeShell?.update(state);
   window.webContents.send('shell:state', state);
@@ -91,6 +92,11 @@ function publish(): void {
   if (busy && sleepBlocker === null) sleepBlocker = powerSaveBlocker.start('prevent-app-suspension');
   else if (!busy && sleepBlocker !== null) { powerSaveBlocker.stop(sleepBlocker); sleepBlocker = null; }
   refreshMenus();
+}
+
+function layoutWorkspaces(): void {
+  const width = nativeShell ? store.value.sidebarCollapsed ? SHELL_LAYOUT.railWidth : SHELL_LAYOUT.sidebarWidth : 224;
+  accounts.layout(store.value.activeId, overlay, width, nativeShell ? SHELL_LAYOUT.toolbarHeight : 64);
 }
 
 function refreshMenus(): void {
@@ -235,7 +241,7 @@ if (gotLock) void app.whenReady().then(async () => {
   window = new BrowserWindow({
     width: 1200, height: 800, ...windowState.bounds(), minWidth: 860, minHeight: 580, title: 'Switchboard',
     titleBarStyle: 'hiddenInset', backgroundColor: NativeShell.enabled() ? '#00000000' : '#f5f5f7', show: false,
-    ...(NativeShell.enabled() ? { vibrancy: 'under-window' as const, visualEffectState: 'followWindow' as const } : {}),
+    ...(NativeShell.enabled() ? { trafficLightPosition: { x: 12, y: (SHELL_LAYOUT.toolbarHeight - 14) / 2 }, vibrancy: 'under-window' as const, visualEffectState: 'followWindow' as const } : {}),
     webPreferences: { preload: join(__dirname, 'shell-preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false }
   });
   windowState.attach(window);
@@ -308,7 +314,7 @@ if (gotLock) void app.whenReady().then(async () => {
   tray = new Tray(image);
   tray.setToolTip('Switchboard');
   tray.on('click', show);
-  window.on('resize', () => { accounts.layout(store.value.activeId, overlay, nativeShell && store.value.sidebarCollapsed ? 80 : 224); nativeShell?.update(snapshot()); });
+  window.on('resize', () => { layoutWorkspaces(); nativeShell?.update(snapshot()); });
   window.on('close', event => { if (!quitting) { event.preventDefault(); window.hide(); } });
   powerMonitor.on('suspend', () => health.suspend());
   powerMonitor.on('resume', () => { health.resume(); accounts.resume(); });
