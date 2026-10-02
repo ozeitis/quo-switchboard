@@ -1,3 +1,12 @@
+Switchboard for Quo 0.5.0 — persistent desktop call controls.
+
+- A native floating panel keeps recognized incoming calls visible outside the main window. Answer opens the source workspace; Decline and Dismiss have separate meanings. Settings can disable the panel. Preview privacy and screen lock hide caller details.
+- The adapter matches Quo's current labeled Incoming call dialog and Accept button, plus Put call on hold / Take call off hold. Disabled Accept controls still identify ringing without exposing Answer. Ambiguous controls remain unavailable.
+- Packaged macOS alerts declare Apple's required alert style. Call alerts have no application timeout. System notification persistence, Focus, and screen-sharing suppression remain user-controlled.
+- Notification buttons use the acknowledged source-call coordinator. Explicit native toolbar dragging avoids web-view interception; window movement and resizing are enabled.
+
+Real Quo call delivery and audio after an extended idle period still require field testing. [Research and boundaries](calls.md).
+
 Switchboard for Quo 0.4.1 — one Quo update action for all workspaces.
 
 - A native bottom-left action appears when a Quo web update is waiting. The compact rail keeps it within reach; ⌘⇧U checks all workspaces at any time.

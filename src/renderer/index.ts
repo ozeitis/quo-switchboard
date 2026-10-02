@@ -178,7 +178,6 @@ window.switchboard.onIntent(value => {
   if (value === 'add') openAccount();
   else if (value === 'settings') openSettings();
   else if (value === 'close-overlay') { accountDialog.close(); settingsDialog.close(); }
-  else if (value === 'answer-unavailable') toast('The call changed. Answer in Quo if it is still ringing.');
 });
 window.switchboard.subscribe(render);
 void window.switchboard.snapshot().then(render).catch(() => toast('Could not load your workspaces. Restart Switchboard.'));

@@ -43,7 +43,7 @@
       <div class="dialog-heading"><div><p class="eyebrow">WORKSPACE</p><h2 id="account-heading">Add a workspace</h2></div><button type="button" class="icon-button dismiss" aria-label="Close">×</button></div>
       <p class="dialog-description">Give it a name you recognize. Sign in to Quo in the next step.</p>
       <label class="field-label" for="account-name">Workspace name</label>
-      <input id="account-name" name="name" maxlength="48" placeholder="e.g. Acme Studio" required autocomplete="off">
+      <input id="account-name" name="name" maxlength="48" placeholder="e.g. Acme Studio" required autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
       <fieldset class="color-field"><legend>Workspace color</legend><div id="colors"></div></fieldset>
       <p id="account-error" class="error-text" role="alert"></p>
       <div class="dialog-footer"><button id="remove-workspace" class="danger subtle" type="button" hidden>Remove workspace…</button><span class="spacer"></span><button type="button" class="secondary dismiss">Cancel</button><button id="save-workspace" type="submit" class="primary">Add workspace</button></div>
@@ -53,6 +53,7 @@
     <form id="settings-form">
       <div class="dialog-heading"><div><p class="eyebrow">SWITCHBOARD</p><h2 id="settings-heading">Settings</h2></div><button type="button" class="icon-button dismiss" aria-label="Close">×</button></div>
       <label class="setting"><span><strong>Desktop notifications</strong><small>Show the workspace name with each notification.</small></span><input name="notifications" type="checkbox" role="switch"></label>
+      <label class="setting"><span><strong>Floating incoming call controls</strong><small>Keep a native call panel on the desktop until the call changes or you dismiss it.</small></span><input name="floatingCalls" type="checkbox" role="switch"></label>
       <label class="setting"><span><strong>Hide notification details</strong><small>Keep caller names and message previews private.</small></span><input name="privateNotifications" type="checkbox" role="switch"></label>
       <label class="setting"><span><strong>Open at login</strong><small>Start Switchboard when you sign in to your Mac.</small></span><input name="launchAtLogin" type="checkbox" role="switch"></label>
       <label class="setting"><span><strong>Show in menu bar</strong><small>Quick access to every workspace and its unread activity.</small></span><input name="showMenuBar" type="checkbox" role="switch"></label>

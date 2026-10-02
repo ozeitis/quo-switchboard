@@ -21,10 +21,10 @@
   _microphone = nil; _audioStatus = nil; _audioMeter = nil; _audioSync = nil; _audioTest = nil; _audioRefresh = nil; _audioSyncScroll = nil;
   [self emit:@{@"type":@"audio-stop"}];
   if (sender.selectedSegment == 0) {
-    NSArray *keys = @[@"notifications", @"privateNotifications", @"launchAtLogin", @"showMenuBar", @"menuBarCount", @"experimentalAnswer", @"animateActivity"];
-    NSArray *titles = @[@"Desktop notifications", @"Hide caller and message previews", @"Open Switchboard at login", @"Show menu-bar icon", @"Show unread count beside the icon", @"Answer from notifications (experimental)", @"Animate call activity"];
+    NSArray *keys = @[@"notifications", @"floatingCalls", @"privateNotifications", @"launchAtLogin", @"showMenuBar", @"menuBarCount", @"experimentalAnswer", @"animateActivity"];
+    NSArray *titles = @[@"Desktop notifications", @"Floating incoming call controls", @"Hide caller and message previews", @"Open Switchboard at login", @"Show menu-bar icon", @"Show unread count beside the icon", @"Answer from system notifications (experimental)", @"Animate call activity"];
     for (NSUInteger i = 0; i < keys.count; ++i) {
-      SettingsChoice *button = [[SettingsChoice alloc] initWithFrame:NSMakeRect(0, 302 - i * 29, 475, 24)]; [button setButtonType:NSButtonTypeSwitch]; button.title = titles[i]; button.preference = keys[i]; button.state = [_snapshot[@"preferences"][keys[i]] boolValue] ? NSControlStateValueOn : NSControlStateValueOff; button.target = self; button.action = @selector(preferenceChanged:); [_settingsBody addSubview:button];
+      SettingsChoice *button = [[SettingsChoice alloc] initWithFrame:NSMakeRect(0, 306 - i * 27, 475, 24)]; [button setButtonType:NSButtonTypeSwitch]; button.title = titles[i]; button.preference = keys[i]; button.state = [_snapshot[@"preferences"][keys[i]] boolValue] ? NSControlStateValueOn : NSControlStateValueOff; button.target = self; button.action = @selector(preferenceChanged:); [_settingsBody addSubview:button];
     }
     [_settingsBody addSubview:label(@"Menu-bar layout", NSMakeRect(0, 83, 150, 22), 12)];
     NSPopUpButton *layout = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(152, 80, 320, 27) pullsDown:NO]; [layout addItemsWithTitles:@[@"One icon · all workspaces", @"Separate workspace icons"]]; [layout selectItemAtIndex:[_snapshot[@"preferences"][@"menuBarLayout"] isEqual:@"separate"] ? 1 : 0]; layout.accessibilityLabel = @"Menu bar layout"; layout.target = self; layout.action = @selector(layoutChanged:); [_settingsBody addSubview:layout];

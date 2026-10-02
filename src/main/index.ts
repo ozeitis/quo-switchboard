@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Accounts } from './accounts';
 import { Calls } from './calls';
+import { CallPanel } from './call-panel';
 import { WebUpdates, validUpdateResult } from './web-updates';
 import { validAudio, validAudioState } from '../shared/audio';
 import { Notifications } from './notifications';
@@ -28,6 +29,8 @@ let store: Store;
 let accounts: Accounts;
 let notifications: Notifications;
 let calls: Calls;
+let callPanel: CallPanel | undefined;
+let screenLocked = false;
 let webUpdates: WebUpdates;
 let testCall: Snapshot['testCall'];
 let testCallTimer: ReturnType<typeof setTimeout> | undefined;
@@ -118,6 +121,7 @@ function publish(): void {
   layoutWorkspaces();
   const state = snapshot();
   nativeShell?.update(state);
+  callPanel?.update(state, screenLocked, id => notifications.callPreview(id));
   menuBar?.update(state);
   window.webContents.send('shell:state', state);
   const active = state.accounts.find(account => account.id === state.activeId);
@@ -347,10 +351,12 @@ async function command(value: unknown): Promise<void> {
     }
     case 'preferences': {
       if (!validPreferences(cmd.preferences)) throw new Error('Invalid preferences.');
+      const hideExistingPreviews = cmd.preferences.privateNotifications && !store.value.preferences.privateNotifications;
       if (app.isPackaged && cmd.preferences.launchAtLogin !== store.value.preferences.launchAtLogin) app.setLoginItemSettings({ openAtLogin: cmd.preferences.launchAtLogin });
       store.save({ ...store.value, preferences: cmd.preferences });
       configureAppearances();
-      if (!cmd.preferences.notifications) notifications.closeAll();
+      if (!cmd.preferences.notifications || hideExistingPreviews) notifications.closeAll();
+      if (cmd.preferences.notifications && hideExistingPreviews) for (const entry of accounts.entries.values()) if (entry.ringId) notifications.ring(entry);
       break;
     }
     case 'overlay': if (typeof cmd.open === 'boolean') overlay = cmd.open; break;
@@ -374,7 +380,7 @@ if (gotLock) void app.whenReady().then(async () => {
   }
   const windowState = new WindowState(app.getPath('userData'));
   window = new BrowserWindow({
-    width: 1200, height: 800, ...windowState.bounds(), minWidth: 860, minHeight: 580, title: 'Switchboard',
+    width: 1200, height: 800, ...windowState.bounds(), minWidth: 860, minHeight: 580, title: 'Switchboard', movable: true, resizable: true,
     titleBarStyle: 'hiddenInset', backgroundColor: NativeShell.enabled() ? '#00000000' : '#f5f5f7', show: false,
     ...(NativeShell.enabled() ? { trafficLightPosition: { x: 12, y: (SHELL_LAYOUT.toolbarHeight - 14) / 2 }, vibrancy: 'under-window' as const, visualEffectState: 'followWindow' as const } : {}),
     webPreferences: { preload: join(__dirname, 'shell-preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false }
@@ -384,8 +390,8 @@ if (gotLock) void app.whenReady().then(async () => {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   health = new Health(app.getPath('userData'));
   accounts = new Accounts(window, publish, id => notifications?.reset(id), health, appearance, () => store.value.audio);
-  notifications = new Notifications(window, accounts, () => store.value.preferences, select, () => { notificationError = true; publish(); }, publish);
   calls = new Calls(accounts.entries, select);
+  notifications = new Notifications(window, accounts, () => store.value.preferences, select, () => { notificationError = true; publish(); }, publish, calls);
   webUpdates = new WebUpdates(accounts.entries, publish);
   ipcMain.handle('account:audio-policy', event => {
     const entry = [...accounts.entries.values()].find(entry => entry.view.webContents === event.sender);
@@ -408,9 +414,11 @@ if (gotLock) void app.whenReady().then(async () => {
   menuBar = new MenuBar(value => {
     void enqueue(value).catch(() => { void dialog.showMessageBox(window, { type: 'error', message: 'Could not complete that action', detail: 'Try again.' }); });
   });
-  if (NativeShell.enabled()) nativeShell = new NativeShell(window, value => {
-    void enqueue(value).catch(error => { void dialog.showMessageBox(window, { type: 'error', message: 'Could not complete that action', detail: error instanceof Error ? error.message : 'Try again.' }); });
-  });
+  if (NativeShell.enabled()) {
+    const nativeCommand = (value: unknown) => { void enqueue(value).catch(error => { void dialog.showMessageBox(window, { type: 'error', message: 'Could not complete that action', detail: error instanceof Error ? error.message : 'Try again.' }); }); };
+    nativeShell = new NativeShell(window, nativeCommand);
+    callPanel = new CallPanel(nativeCommand);
+  }
   ipcMain.on('account:event', (event, raw: unknown) => {
     const entry = [...accounts.entries.values()].find(item => item.view.webContents === event.sender);
     if (!entry || event.senderFrame !== event.sender.mainFrame || !appOrigin(event.senderFrame.url) || !raw || typeof raw !== 'object') return;
@@ -457,13 +465,10 @@ if (gotLock) void app.whenReady().then(async () => {
         break;
       case 'ring-end':
         if (data.id !== entry.ringId) return;
-        notifications.close(`${accountId}:ring:${entry.ringId}`);
+        notifications.endRing(entry, entry.ringId!);
         entry.ringId = null;
         entry.state.ringing = false;
         publish();
-        break;
-      case 'answer-result':
-        if (data.id === entry.ringId && data.clicked === false) window.webContents.send('shell:intent', 'answer-unavailable');
         break;
     }
   });
@@ -474,6 +479,8 @@ if (gotLock) void app.whenReady().then(async () => {
   window.on('close', event => { if (!quitting) { event.preventDefault(); window.hide(); } });
   powerMonitor.on('suspend', () => health.suspend());
   powerMonitor.on('resume', () => { health.resume(); accounts.resume(); });
+  powerMonitor.on('lock-screen', () => { screenLocked = true; publish(); });
+  powerMonitor.on('unlock-screen', () => { screenLocked = false; publish(); });
   healthTimer = setInterval(() => health.tick(), 30_000);
   healthTimer.unref();
   health.tick();
@@ -506,7 +513,7 @@ async function shutdown(): Promise<void> {
   if (shutdownStarted) return;
   shutdownStarted = true;
   clearInterval(healthTimer); clearTimeout(testCallTimer); calls?.dispose(); webUpdates?.dispose();
-  nativeShell?.dispose();
+  callPanel?.dispose(); nativeShell?.dispose();
   notifications?.closeAll();
   await accounts?.close();
   health?.close();

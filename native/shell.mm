@@ -41,6 +41,19 @@ static NSView *material(NSRect frame, NSView *content) {
 - (BOOL)mouseDownCanMoveWindow { return YES; }
 @end
 
+@interface ToolbarView : FlippedView
+@end
+@implementation ToolbarView
+- (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
+- (void)mouseDown:(NSEvent *)event { [self.window performWindowDragWithEvent:event]; }
+@end
+
+@interface ToolbarTitle : NSTextField
+@end
+@implementation ToolbarTitle
+- (NSView *)hitTest:(NSPoint)point { return nil; }
+@end
+
 @interface WorkspaceCell : NSTableCellView
 @property NSTextField *detail;
 @end
@@ -294,12 +307,14 @@ static NSImage *themePreview(NSDictionary *colors) {
   _table.menu = menu;
   [side addSubview:scroll];
 
-  FlippedView *bar = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, width, toolbarHeight)];
+  ToolbarView *bar = [[ToolbarView alloc] initWithFrame:NSMakeRect(0, 0, width, toolbarHeight)];
   _toolbar = bar;
   _toolbar.frame = NSMakeRect(0, height - toolbarHeight, width, toolbarHeight);
   _toolbar.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
   [host addSubview:_toolbar positioned:NSWindowAbove relativeTo:nil];
-  _title = label(@"Switchboard", NSMakeRect(sidebarWidth + 12, (toolbarHeight - 20) / 2, width - sidebarWidth - 116, 20), 13);
+  _title = [ToolbarTitle labelWithString:@"Switchboard"];
+  _title.frame = NSMakeRect(sidebarWidth + 12, (toolbarHeight - 20) / 2, width - sidebarWidth - 116, 20);
+  _title.lineBreakMode = NSLineBreakByTruncatingTail;
   _title.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
   _title.autoresizingMask = NSViewWidthSizable;
   [bar addSubview:_title];
@@ -736,10 +751,15 @@ static napi_value settings(napi_env env, napi_callback_info info) { [controller 
 static napi_value dismiss(napi_env env, napi_callback_info info) { [controller dismiss]; return nullptr; }
 static napi_value dispose(napi_env env, napi_callback_info info) { [controller dispose]; controller = nil; return nullptr; }
 #include "activity.mm"
+#include "call-panel.mm"
 
-static void cleanup(void *) { [activityController dispose]; activityController = nil; [controller dispose]; controller = nil; }
+static void cleanup(void *) { [callPanelController dispose]; callPanelController = nil; [activityController dispose]; activityController = nil; [controller dispose]; controller = nil; }
 static napi_value initialize(napi_env env, napi_value exports) {
   napi_property_descriptor properties[] = {
+    {"callsAttach", nullptr, callsAttach, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"callsUpdate", nullptr, callsUpdate, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"callsInspect", nullptr, callsInspect, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"callsDispose", nullptr, callsDispose, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"statusAttach", nullptr, statusAttach, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"statusUpdate", nullptr, statusUpdate, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"statusFrame", nullptr, statusFrame, nullptr, nullptr, nullptr, napi_default, nullptr},

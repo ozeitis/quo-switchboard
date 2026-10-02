@@ -14,6 +14,7 @@ export type ThemeSupport = 'unmodified' | 'waiting' | 'compatible' | 'unsupporte
 export interface Preferences {
   notifications: boolean;
   privateNotifications: boolean;
+  floatingCalls: boolean;
   experimentalAnswer: boolean;
   launchAtLogin: boolean;
   showMenuBar: boolean;
@@ -91,12 +92,12 @@ export type AccountEvent =
   | { type: 'state'; status: 'ready' | 'sign-in' | 'offline'; unread: number; unreadKnown: boolean; inCall: boolean; callPhase: CallPhase; muted: boolean; themeSupport: ThemeSupport; callId?: string; callActions?: CallAction[] }
   | { type: 'ring'; id: string }
   | { type: 'ring-end'; id: string }
-  | { type: 'call-action-result'; requestId: string; clicked: boolean }
-  | { type: 'answer-result'; id: string; clicked: boolean };
+  | { type: 'call-action-result'; requestId: string; clicked: boolean };
 
 export const DEFAULT_PREFERENCES: Preferences = {
   notifications: true,
   privateNotifications: false,
+  floatingCalls: true,
   experimentalAnswer: false,
   launchAtLogin: false,
   showMenuBar: true,
@@ -128,6 +129,7 @@ export function parseConfig(value: unknown): Config {
   if (!value || typeof value !== 'object') throw new Error('Invalid settings file');
   const v = value as Config;
   const preferences = { ...v.preferences,
+    floatingCalls: v.preferences?.floatingCalls === undefined ? true : v.preferences.floatingCalls,
     showMenuBar: v.preferences?.showMenuBar === undefined ? true : v.preferences.showMenuBar,
     menuBarCount: v.preferences?.menuBarCount === undefined ? false : v.preferences.menuBarCount,
     menuBarLayout: v.preferences?.menuBarLayout === undefined ? 'combined' : v.preferences.menuBarLayout,

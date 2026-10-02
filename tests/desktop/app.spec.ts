@@ -8,6 +8,11 @@ import { channels } from '../../src/shared/theme';
 
 interface NativeRecord { notification: NativeNotification; title: string; body: string; subtitle: string; actions: string[] }
 type MainGlobal = typeof globalThis & { notificationRecords: NativeRecord[]; externalOrigins: string[]; textMenus: { menu: NativeMenu; frameURL?: string }[]; nativeStatus: { items: { id: string; name: string; title: string }[]; accounts: import('../../src/shared/model').AccountState[]; activity: import('../../src/shared/model').ActivityItem[]; testCall?: import('../../src/shared/model').Snapshot['testCall'] }; nativeStatusAction: (json: string) => void; nativeStatusInspect: () => { id: string; title: string; image: string }[]; fixtureReduceMotion?: boolean };
+type CallPanelGlobal = typeof globalThis & {
+  nativeCallsInspect(): { visible: boolean; key: boolean; nonactivating: boolean; level: number; dismissed: number; cards: { id: string; callId: string; name: string; actions: string[]; title?: string; body?: string; busy: boolean }[] };
+  nativeCallAction(json: string): void;
+  fixtureCallFailures?: number;
+};
 
 const fixture = `<!doctype html><html><head><title>Quo fixture</title></head><body>
 <h1>Quo test workspace</h1><button id="notify">Send notification</button><button id="ring">Simulate incoming call</button>
@@ -84,7 +89,9 @@ test.afterEach(async () => {
 async function add(name: string): Promise<Page> {
   const pagePromise = application.context().waitForEvent('page');
   await window.getByRole('button', { name: /^Add workspace/ }).click();
+  await expect(window.getByLabel('Workspace name', { exact: true })).toBeFocused();
   await window.getByLabel('Workspace name', { exact: true }).fill(name);
+  await expect(window.getByLabel('Workspace name', { exact: true })).toHaveValue(name);
   await window.getByRole('dialog').getByRole('button', { name: 'Add workspace', exact: true }).click();
   const page = await pagePromise;
   await page.waitForLoadState('domcontentloaded');
@@ -199,8 +206,8 @@ test('saved workspace profiles survive a clean application restart', async () =>
 });
 
 test('a detected active call blocks answering in a second workspace', async () => {
-  const studio = await add('Studio');
-  const workshop = await add('Workshop');
+  const studio = await addNative('Studio');
+  const workshop = await addNative('Workshop');
   await application.evaluate(({ dialog }) => {
     dialog.showMessageBox = (async () => ({ response: 0, checkboxChecked: false })) as typeof dialog.showMessageBox;
   });
@@ -885,4 +892,115 @@ test('a failed update check preserves both controlling workers and a retry compl
   await shellCommand({ type: 'update-workspaces' });
   for (const page of [studio, workshop]) await expect.poll(() => workerVersion(page).catch(() => 'pending')).toBe('v2');
   expect((await stateSnapshot()).webUpdates?.error).toBeUndefined();
+});
+
+
+const currentQuoCallFixture = fixture.replace("area.innerHTML = '<button aria-label=\"Answer call\">Answer</button>';", "area.innerHTML = '<section role=\"dialog\" aria-label=\"Incoming call\"><p>Taylor</p><button>Decline</button><button>Accept</button></section>'; area.querySelectorAll('button')[0].onclick = () => { document.body.dataset.declined = 'yes'; area.replaceChildren(); };").replace("area.firstChild.onclick = () =>", "area.querySelectorAll('button')[1].onclick = () =>");
+const callPanel = () => application.evaluate(() => (globalThis as CallPanelGlobal).nativeCallsInspect());
+const panelAction = (card: { id: string; callId: string }, action: string) => application.evaluate((_electron, value) => (globalThis as CallPanelGlobal).nativeCallAction(JSON.stringify(value)), { type: 'call-action', ...card, action });
+
+test('the current Quo Accept dialog produces a persistent nonactivating panel and answers its hidden source', async () => {
+  await application.close(); await launch(dataDirectory, false, true, currentQuoCallFixture);
+  const studio = await addNative('Studio'); const workshop = await addNative('Workshop');
+  const ids = (await stateSnapshot()).accounts.map(account => account.id);
+  await studio.evaluate(() => document.getElementById('ring')!.click());
+  await expect.poll(async () => (await callPanel()).cards.map(card => [card.name, card.actions])).toEqual([['Studio', ['answer', 'decline']]]);
+  await expect.poll(async () => (await callPanel()).visible).toBe(true);
+  expect(await callPanel()).toMatchObject({ nonactivating: true, key: false });
+  expect((await stateSnapshot()).activeId).toBe(ids[1]);
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+  expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(false);
+  expect((await callPanel()).visible).toBe(true);
+  const stale = (await callPanel()).cards[0]!;
+  await panelAction({ id: stale.id, callId: stale.callId }, 'answer');
+  await expect.poll(() => studio.evaluate(() => document.body.dataset.answered)).toBe('yes');
+  expect(await workshop.evaluate(() => document.body.dataset.answered)).toBeUndefined();
+  expect((await stateSnapshot()).activeId).toBe(ids[0]);
+  await expect.poll(async () => (await callPanel()).visible).toBe(false);
+  expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(true);
+  await studio.getByRole('button', { name: 'End call' }).click();
+  await studio.evaluate(() => { delete document.body.dataset.answered; document.getElementById('ring')!.click(); });
+  await expect.poll(async () => { const current = (await callPanel()).cards[0]; return !!current && current.callId !== stale.callId; }).toBe(true);
+  await application.evaluate(({ dialog }) => { (globalThis as CallPanelGlobal).fixtureCallFailures = 0; dialog.showMessageBox = async () => { (globalThis as CallPanelGlobal).fixtureCallFailures!++; return { response: 0, checkboxChecked: false }; }; });
+  await panelAction({ id: stale.id, callId: stale.callId }, 'answer');
+  await expect.poll(() => application.evaluate(() => (globalThis as CallPanelGlobal).fixtureCallFailures)).toBe(1);
+  expect(await studio.evaluate(() => document.body.dataset.answered)).toBeUndefined();
+  const current = (await callPanel()).cards[0]!;
+  await panelAction({ id: current.id, callId: current.callId }, 'decline');
+  await expect.poll(() => studio.evaluate(() => document.body.dataset.declined)).toBe('yes');
+  await expect.poll(async () => (await callPanel()).visible).toBe(false);
+});
+
+test('call panels honor privacy, screen lock, preferences, cancellation, and disabled or ambiguous controls', async () => {
+  await application.close(); await launch(dataDirectory, false, true, currentQuoCallFixture);
+  const page = await addNative('Studio'); await addNative('Workshop');
+  await page.evaluate(() => document.getElementById('ring')!.click());
+  await expect.poll(async () => (await callPanel()).cards[0]?.body).toBe('Taylor is calling you');
+  const preferences = (await stateSnapshot()).preferences;
+  await shellCommand({ type: 'preferences', preferences: { ...preferences, privateNotifications: true } });
+  expect((await callPanel()).cards[0]).not.toHaveProperty('body');
+  expect((await callPanel()).cards[0]).not.toHaveProperty('title');
+  await application.evaluate(({ powerMonitor }) => powerMonitor.emit('lock-screen'));
+  expect((await callPanel()).visible).toBe(false);
+  await application.evaluate(({ powerMonitor }) => powerMonitor.emit('unlock-screen'));
+  expect((await callPanel()).visible).toBe(true);
+  await shellCommand({ type: 'preferences', preferences: { ...preferences, floatingCalls: false } });
+  expect((await callPanel()).visible).toBe(false);
+  await shellCommand({ type: 'preferences', preferences: { ...preferences, notifications: false } });
+  expect((await callPanel()).visible).toBe(false);
+  await shellCommand({ type: 'preferences', preferences });
+  expect((await callPanel()).visible).toBe(true);
+  await page.evaluate(() => document.querySelector('#call button:last-child')!.setAttribute('disabled', ''));
+  await expect.poll(async () => (await callPanel()).cards[0]?.actions).toEqual(['decline']);
+  await page.evaluate(() => { document.querySelector('#call button:last-child')!.removeAttribute('disabled'); document.querySelector('#call section')!.insertAdjacentHTML('beforeend', '<button>Accept</button>'); });
+  await expect.poll(async () => (await callPanel()).visible).toBe(false);
+  await page.evaluate(() => document.querySelector('#call')!.replaceChildren());
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]!.ringing).toBe(false);
+});
+
+test('native call cards stay distinct across workspaces, block busy Answer, and recognize current Quo hold labels', async () => {
+  await application.close(); await launch(dataDirectory, false, true, currentQuoCallFixture);
+  const studio = await addNative('Studio'); const workshop = await addNative('Workshop');
+  await studio.evaluate(() => document.getElementById('ring')!.click()); await workshop.evaluate(() => document.getElementById('ring')!.click());
+  await expect.poll(async () => (await callPanel()).cards.map(card => card.name)).toEqual(['Studio', 'Workshop']);
+  const first = (await callPanel()).cards[0]!; await panelAction({ id: first.id, callId: first.callId }, 'answer');
+  await expect.poll(async () => (await callPanel()).cards.map(card => [card.name, card.busy])).toEqual([['Workshop', true]]);
+  await application.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false }); });
+  const second = (await callPanel()).cards[0]!; await panelAction({ id: second.id, callId: second.callId }, 'answer');
+  expect(await workshop.evaluate(() => document.body.dataset.answered)).toBeUndefined();
+  await studio.evaluate(() => {
+    const region = document.querySelector('#call')!; const end = region.querySelector('button')!;
+    const dialog = document.createElement('section'); dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-label', 'Call in progress');
+    region.append(dialog); dialog.append(end); dialog.insertAdjacentHTML('beforeend', '<button aria-label="Put call on hold">Hold</button>');
+    dialog.querySelector('[aria-label="Put call on hold"]')!.addEventListener('click', event => (event.currentTarget as HTMLElement).setAttribute('aria-label', 'Take call off hold'));
+  });
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]!.callActions).toContain('hold');
+  const active = (await stateSnapshot()).accounts[0]!;
+  await shellCommand({ type: 'call-action', id: active.id, callId: active.callId, action: 'hold' });
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]!.callPhase).toBe('held');
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]!.callActions).toContain('resume');
+  await studio.getByRole('button', { name: 'End call' }).click();
+  await expect.poll(async () => (await callPanel()).cards[0]?.busy).toBe(false);
+  await panelAction({ id: second.id, callId: second.callId }, 'decline');
+  await expect.poll(async () => (await callPanel()).visible).toBe(false);
+});
+
+
+test('system call notifications expose source-bound Decline and suppress alerts for a call already answered', async () => {
+  await application.close(); await launch(dataDirectory, false, true, currentQuoCallFixture);
+  const studio = await addNative('Studio'); const workshop = await addNative('Workshop');
+  const preferences = (await stateSnapshot()).preferences;
+  await shellCommand({ type: 'preferences', preferences: { ...preferences, experimentalAnswer: true } });
+  await studio.evaluate(() => document.getElementById('ring')!.click());
+  await expect.poll(async () => (await notifications()).at(-1)?.body).toBe('Taylor is calling you');
+  expect((await notifications()).at(-1)?.actions).toEqual(['Answer', 'Decline']);
+  await application.evaluate(() => (globalThis as MainGlobal).notificationRecords.at(-1)!.notification.emit('action', {}, 1));
+  await expect.poll(() => studio.evaluate(() => document.body.dataset.declined)).toBe('yes');
+  expect(await workshop.evaluate(() => document.body.dataset.declined)).toBeUndefined();
+  await expect.poll(async () => (await callPanel()).visible).toBe(false);
+  const count = (await notifications()).length;
+  await studio.evaluate(() => { document.getElementById('ring')!.click(); (document.querySelector('#call button:last-child') as HTMLElement).click(); });
+  await expect.poll(async () => (await stateSnapshot()).accounts[0]!.inCall).toBe(true);
+  await window.waitForTimeout(600);
+  expect((await notifications()).length).toBe(count);
 });

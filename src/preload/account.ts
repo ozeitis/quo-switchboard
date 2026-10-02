@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { AccountEvent } from '../shared/model';
 import { appOrigin } from '../main/policy';
-import { findAnswerButton, hasActiveCall, readCallState, callButtons } from './call-controls';
+import { findIncomingCallButton, hasActiveCall, readCallState, callButtons } from './call-controls';
 import { DesktopAppearance } from './appearance';
 import { installAudio } from './audio';
 import { installWebUpdates } from './web-updates';
@@ -99,7 +99,7 @@ if (appOrigin(location.href) && process.isMainFrame) {
   const unread = new UnreadCounter();
   const update = () => {
     appearance?.update();
-    const button = findAnswerButton(document);
+    const button = findIncomingCallButton(document);
     if (ring && button !== ring.button) {
       send({ type: 'ring-end', id: ring.id });
       ring = null;
@@ -111,7 +111,7 @@ if (appOrigin(location.href) && process.isMainFrame) {
     const signIn = /\/(login|signin|sign-in|auth)(\/|$)/i.test(location.pathname)
       || !!document.querySelector('input[autocomplete="current-password"], input[autocomplete="one-time-code"]');
     const buttons = callButtons(document);
-    const anchor = buttons.answer ?? buttons.end;
+    const anchor = button ?? buttons.end;
     if (!anchor) { callId = undefined; currentAnchor = undefined; }
     else if (!callId || (currentAnchor !== anchor)) { callId = crypto.randomUUID(); }
     currentAnchor = anchor;
@@ -133,13 +133,6 @@ if (appOrigin(location.href) && process.isMainFrame) {
     update();
   });
 
-  window.addEventListener('switchboard:answer', event => {
-    const id = (event as CustomEvent<string>).detail;
-    const current = ring;
-    const clicked = !!current && id === current.id && findAnswerButton(document) === current.button && !hasActiveCall(document);
-    if (clicked) current!.button.click();
-    send({ type: 'answer-result', id, clicked });
-  });
   window.addEventListener('online', update);
   window.addEventListener('offline', update);
   const heartbeat = () => { appearance?.invalidate(); update(); send({ type: 'heartbeat' }); };

@@ -27,6 +27,7 @@ mac:
   entitlements: assets/entitlements.plist
   entitlementsInherit: assets/entitlements.plist
   extendInfo:
+    NSUserNotificationAlertStyle: alert
     NSMicrophoneUsageDescription: Use your microphone for Quo calls and local audio tests.
   target:
     - dmg

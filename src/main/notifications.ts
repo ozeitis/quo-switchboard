@@ -3,18 +3,24 @@ import type { LiveAccount, Accounts } from './accounts';
 import { cleanText } from './policy';
 import { randomUUID } from 'node:crypto';
 import type { ActivityItem, Preferences } from '../shared/model';
+import type { Calls } from './calls';
 
 interface Delivered {
   accountId: string;
   pageId: string | null;
   tag: string;
   notification: Notification;
-  timer: ReturnType<typeof setTimeout>;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 export class Notifications {
   private delivered = new Map<string, Delivered>();
   private history: (ActivityItem & { pageId: string })[] = [];
+  private previews = new Map<string, { ringId: string; title: string; body: string }>();
+  callPreview(id: string): { title: string; body: string } | undefined {
+    const preview = this.previews.get(id);
+    return preview && preview.ringId === this.accounts.entries.get(id)?.ringId ? { title: preview.title, body: preview.body } : undefined;
+  }
   activity(): ActivityItem[] { return this.history.map(({ pageId: _page, ...item }) => this.preferences().privateNotifications ? { ...item, title: 'Quo activity', body: 'Open the workspace to view it.' } : item); }
   openActivity(id: string): void {
     const item = this.history.find(item => item.id === id); const entry = item && this.accounts.entries.get(item.workspaceId);
@@ -27,7 +33,8 @@ export class Notifications {
     private preferences: () => Preferences,
     private select: (id: string) => void,
     private failed: () => void,
-    private changed: () => void
+    private changed: () => void,
+    private calls: Calls
   ) {}
 
   forward(entry: LiveAccount, pageId: string, title: string, body: string, tag: string, silent: boolean): void {
@@ -36,12 +43,17 @@ export class Notifications {
     this.history.unshift({ id: randomUUID(), workspaceId: entry.state.id, pageId, title: cleanText(title, 160), body: cleanText(body, 160), at: Date.now() });
     this.history.splice(20); this.changed();
     const callLike = /\b(incoming call|is calling|calling you|call from)\b/i.test(`${title} ${body}`);
+    const observedRing = entry.ringId;
     const timer = setTimeout(() => {
       this.pending.delete(key);
+      if (callLike && observedRing && observedRing !== entry.ringId) return;
+      if (callLike && entry.state.inCall && !entry.ringId) return;
       if (callLike && entry.ringId) {
+        this.previews.set(entry.state.id, { ringId: entry.ringId, title: cleanText(title, 160), body: cleanText(body, 500) });
         const ringKey = `${entry.state.id}:ring:${entry.ringId}`;
         this.close(ringKey);
         this.show(entry, ringKey, pageId, title, body, 'incoming-call', true, entry.ringId);
+        this.changed();
         return;
       }
       this.show(entry, key, pageId, title, body, tag, silent);
@@ -51,7 +63,17 @@ export class Notifications {
 
   ring(entry: LiveAccount): void {
     if (!entry.ringId) return;
-    this.show(entry, `${entry.state.id}:ring:${entry.ringId}`, null, 'Incoming call', 'Open this workspace to answer in Quo.', 'incoming-call', true, entry.ringId);
+    const id = entry.ringId, key = `${entry.state.id}:ring:${id}`;
+    const timer = setTimeout(() => {
+      this.pending.delete(key);
+      if (entry.ringId === id) this.show(entry, key, null, 'Incoming call', 'Open this workspace to manage the call.', 'incoming-call', true, id);
+    }, 150);
+    this.pending.set(key, timer);
+  }
+
+  endRing(entry: LiveAccount, id: string): void {
+    this.close(`${entry.state.id}:ring:${id}`);
+    if (this.previews.get(entry.state.id)?.ringId === id) this.previews.delete(entry.state.id);
   }
 
   test(entry: LiveAccount): void {
@@ -65,6 +87,8 @@ export class Notifications {
     }
     if (this.delivered.size >= 50) this.close(this.delivered.keys().next().value!);
     const canAnswer = !!ringId && this.preferences().experimentalAnswer;
+    const actions = [{ type: 'button' as const, text: canAnswer ? 'Answer' : ringId ? 'Open call' : 'Open workspace' }];
+    if (ringId && entry.state.callActions?.includes('decline')) actions.push({ type: 'button', text: 'Decline' });
     const notification = new Notification({
       id: key,
       groupId: entry.state.id,
@@ -72,7 +96,7 @@ export class Notifications {
       subtitle: this.preferences().privateNotifications ? 'Quo activity' : cleanText(title, 160),
       body: this.preferences().privateNotifications ? 'Open your workspace to view it.' : cleanText(body, 500),
       silent,
-      actions: [{ type: 'button', text: canAnswer ? 'Answer' : ringId ? 'Open call' : 'Open workspace' }],
+      actions,
       closeButtonText: 'Dismiss'
     });
     const open = () => {
@@ -81,16 +105,16 @@ export class Notifications {
       if (pageId) this.pageEvent(entry, pageId, 'click');
     };
     notification.on('click', open);
-    notification.on('action', () => {
-      open();
-      if (canAnswer && ringId) void this.answer(entry, ringId);
+    notification.on('action', (_event, index: number) => {
+      if (ringId && (canAnswer || index === 1)) void this.callAction(entry, ringId, index === 1 ? 'decline' : 'answer');
+      else open();
     });
     notification.on('show', () => { if (pageId) this.pageEvent(entry, pageId, 'show'); });
     // macOS can finish closing an alert after its replacement was registered.
     const forgetCurrent = () => { if (this.delivered.get(key)?.notification === notification) this.forget(key); };
     notification.on('failed', () => { this.failed(); if (pageId) this.pageEvent(entry, pageId, 'error'); forgetCurrent(); });
     notification.on('close', () => { if (pageId) this.pageEvent(entry, pageId, 'close'); forgetCurrent(); });
-    const timer = setTimeout(() => this.close(key), ringId ? 90_000 : 300_000);
+    const timer = ringId ? undefined : setTimeout(() => this.close(key), 300_000);
     this.delivered.set(key, { accountId: entry.state.id, pageId, tag, notification, timer });
     notification.show();
   }
@@ -107,18 +131,16 @@ export class Notifications {
     this.delivered.set(key, { accountId: entry.state.id, pageId: null, tag: 'test-call', notification, timer }); notification.show();
   }
 
-  private async answer(entry: LiveAccount, id: string): Promise<void> {
-    if (entry.ringId !== id || !this.preferences().experimentalAnswer) return;
-    const busy = [...this.accounts.entries.values()].find(account => account.state.inCall);
-    if (busy) {
+  private async callAction(entry: LiveAccount, id: string, action: 'answer' | 'decline'): Promise<void> {
+    if (entry.ringId !== id || (action === 'answer' && !this.preferences().experimentalAnswer)) return;
+    const callId = entry.state.callId;
+    if (!callId || !await this.calls.perform(entry.state.id, callId, action)) {
       await dialog.showMessageBox(this.window, {
-        type: 'info', message: `A call is already active in ${busy.state.name}.`,
-        detail: 'Manage that call in Quo before answering another. Switchboard will not hold or end it for you.'
+        type: 'info', message: 'The call control is unavailable.',
+        detail: 'The call may have changed, or another workspace has an active call. Manage it in Quo.'
       });
       return;
     }
-    // User chose Answer. Revalidate the exact control in its original renderer.
-    await entry.view.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('switchboard:answer', { detail: ${JSON.stringify(id)} }))`, true).catch(() => undefined);
   }
 
   private pageEvent(entry: LiveAccount, id: string, type: string): void {
@@ -137,6 +159,7 @@ export class Notifications {
     item?.notification.close();
   }
   reset(accountId: string): void {
+    this.previews.delete(accountId);
     this.history = this.history.filter(item => item.workspaceId !== accountId);
     for (const key of this.pending.keys()) if (key.startsWith(`${accountId}:`)) this.close(key);
     for (const [key, item] of this.delivered) if (item.accountId === accountId) this.close(key);

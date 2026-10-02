@@ -56,6 +56,17 @@ test('removed active accounts fall back without retaining unknown settings', () 
   assert.equal(config.accounts[0]?.name, 'Studio');
   assert.equal('injected' in config, false);
 });
+test('floating call preference migrates without changing notification consent or profile identity', () => {
+  const { floatingCalls: _floating, ...preferences } = emptyConfig().preferences;
+  const account = { id: '00000000-0000-4000-8000-000000000001', name: 'Studio', color: 'blue' };
+  const legacy = { ...emptyConfig(), accounts: [account], activeId: account.id, preferences: { ...preferences, notifications: false } };
+  const restored = parseConfig(legacy);
+  assert.equal(restored.preferences.floatingCalls, true);
+  assert.equal(restored.preferences.notifications, false);
+  assert.equal(restored.activeId, account.id);
+  assert.equal(parseConfig({ ...legacy, preferences: { ...preferences, floatingCalls: false } }).preferences.floatingCalls, false);
+  assert.throws(() => parseConfig({ ...legacy, preferences: { ...preferences, floatingCalls: 'true' } }));
+});
 test('notification content cannot use control characters to spoof its account label', () => {
   assert.equal(cleanText('\u202eHello\u0000world', 40), 'Hello world');
   assert.equal(cleanText('a'.repeat(1000), 160).length, 160);

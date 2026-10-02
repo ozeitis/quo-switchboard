@@ -77,9 +77,11 @@ sequenceDiagram
 
 Page notifications retain their original click callback. The adapter does not read the user’s conversation history. It forwards title/body data already supplied by Quo to its Notification constructor. It emulates the subset of the browser Notification interface used here; it is not a full browser Notification implementation. Service-worker notifications bypass this page adapter.
 
-Incoming-call observation uses accessible button labels, never screen coordinates. A ring token identifies the lifetime of one exact DOM control. Removal or replacement invalidates the token. Two candidate controls revoke direct answering. English labels currently supported: “Answer call”, “Accept call”, or “Answer” / “Accept” inside a dialog explicitly containing “Incoming call”. No private Quo API is called.
+Incoming-call observation uses accessible button labels, never screen coordinates. A ring token identifies the lifetime of one exact DOM control. Removal or replacement invalidates the token. Two candidate controls revoke direct answering. English labels currently supported: “Answer call”, “Accept call”, or “Answer” / “Accept” inside a dialog whose accessible label or text identifies “Incoming call”. No private Quo API is called.
 
-This cannot establish a durable server call ID or prove transport health. A webpage can change faster than the adapter. Answer from notifications therefore defaults off and is labeled experimental. Popover call controls are available only while a current unambiguous control is recognized; they share the same UI-observation limitation. Call-state inference also means cross-account busy detection is conservative only for recognized controls; it is not a replacement for provider-level call coordination.
+This cannot establish a durable server call ID or prove transport health. A webpage can change faster than the adapter. Answer from notifications therefore defaults off and is labeled experimental. Popover and floating-panel call controls are available only while a current unambiguous control is recognized; they share the same UI-observation limitation. Call-state inference also means cross-account busy detection is conservative only for recognized controls; it is not a replacement for provider-level call coordination.
+
+`CallPanel` publishes source-bound incoming cards to a nonactivating AppKit `NSPanel`, independent of the main window. It remains visible while a recognized call rings; dismissal is local to that control token. Closing the main window does not close the panel. Screen lock and desktop-alert preferences hide it. Notification actions use the same acknowledged `Calls` coordinator as the native panels. See [call design](calls.md).
 
 ## Lifecycle
 
@@ -120,6 +122,8 @@ No relay, API key storage, server, or paid subscription is part of this release.
 | `src/main/index.ts` | App lifecycle, menus, IPC authorization, command routing |
 | `src/main/accounts.ts` | Profile isolation, navigation, permissions, views |
 | `src/main/text-menu.ts` | Native text menus bound to their originating browser view |
+| `src/main/call-panel.ts` | Source-bound floating incoming calls and privacy |
+| `native/call-panel.mm` | Nonactivating AppKit panel and native call buttons |
 | `src/main/menu-bar.ts` | Native activity models, status-item preferences, ringing animation |
 | `src/preload/appearance.ts` | Scoped Quo navigation and typography adaptation |
 | `src/preload/unread.ts` | Semantic unread badge observation and unavailable-state reporting |

@@ -8,6 +8,7 @@ export class Calls {
   async perform(workspaceId: string, callId: string, action: CallAction): Promise<boolean> {
     const entry = this.entries.get(workspaceId);
     if (!entry || entry.state.callId !== callId || !entry.state.callActions?.includes(action)) return false;
+    if ([...this.pending.values()].some(request => request.workspaceId === workspaceId)) return false;
     if (action === 'answer' && [...this.entries.values()].some(account => account.state.inCall)) return false;
     this.select(workspaceId);
     const requestId = randomUUID();
