@@ -81,7 +81,7 @@ Incoming-call observation uses accessible button labels, never screen coordinate
 
 This cannot establish a durable server call ID or prove transport health. A webpage can change faster than the adapter. Answer from notifications therefore defaults off and is labeled experimental. Popover and floating-panel call controls are available only while a current unambiguous control is recognized; they share the same UI-observation limitation. Call-state inference also means cross-account busy detection is conservative only for recognized controls; it is not a replacement for provider-level call coordination.
 
-`CallPanel` publishes source-bound incoming cards to a nonactivating AppKit `NSPanel`, independent of the main window. It remains visible while a recognized call rings; dismissal is local to that control token. Closing the main window does not close the panel. Screen lock and desktop-alert preferences hide it. Notification actions use the same acknowledged `Calls` coordinator as the native panels. See [call design](calls.md).
+`CallPanel` publishes source-bound incoming cards to a nonactivating AppKit `NSPanel` and a native strip inside the main window. The strip reserves space above Quo, shows calls to every workspace, and scrolls after three rows. Desktop-alert preferences hide the floating panel while leaving in-app controls available. Screen lock hides both; preview privacy is applied before either receives caller text. Floating dismissal is local to its control token. Both surfaces and notification actions use the same acknowledged `Calls` coordinator. See [call design](calls.md).
 
 ## Lifecycle
 

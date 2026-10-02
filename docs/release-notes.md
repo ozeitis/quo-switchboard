@@ -1,3 +1,11 @@
+Switchboard for Quo 0.5.1 — incoming calls in the window and standard Mac commands.
+
+- Incoming calls appear in a native strip inside the main window, including calls to other workspaces. Quo's controls move below the strip and remain reachable.
+- Floating Answer and Decline controls keep readable green/red colors when Switchboard is inactive. Caller-preview privacy applies to both surfaces.
+- Adds Close Window (⌘W), explicit Minimize/Zoom commands, and Show Switchboard (⌘⇧O). Closing keeps background calls alive.
+
+Real incoming-call detection in an inactive workspace was observed on 0.5.0. Live audio, physical edge resizing/dragging, and extended idle behavior still require field verification.
+
 Switchboard for Quo 0.5.0 — persistent desktop call controls.
 
 - A native floating panel keeps recognized incoming calls visible outside the main window. Answer opens the source workspace; Decline and Dismiss have separate meanings. Settings can disable the panel. Preview privacy and screen lock hide caller details.

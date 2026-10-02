@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Accounts } from './accounts';
 import { Calls } from './calls';
-import { CallPanel } from './call-panel';
+import { CallPanel, incomingCallCards } from './call-panel';
 import { WebUpdates, validUpdateResult } from './web-updates';
 import { validAudio, validAudioState } from '../shared/audio';
 import { Notifications } from './notifications';
@@ -60,7 +60,7 @@ function configureAppearances(): void { for (const entry of accounts.entries.val
 function snapshot(): Snapshot {
   const activeAppearance = appearance(store.value.activeId);
   const environment = NativeShell.environment();
-  return {
+  const state: Snapshot = {
     nativeShell: !!nativeShell,
     sidebarCollapsed: store.value.sidebarCollapsed,
     macAppearance: store.value.macAppearance,
@@ -81,6 +81,9 @@ function snapshot(): Snapshot {
     appearance: activeAppearance,
     themeCatalog: THEME_PRESETS.map(preset => ({ id: preset.id, name: preset.name, colors: resolveTheme({ preset: preset.id, mode: activeAppearance.theme.mode, accent: activeAppearance.theme.accent ?? preset.accent }, nativeTheme.shouldUseDarkColors, environment.increaseContrast, environment.systemAccent).colors }))
   };
+  state.incomingCalls = incomingCallCards(state, id => notifications?.callPreview(id));
+  state.callShelfHeight = nativeShell ? Math.min(SHELL_LAYOUT.callMaxRows, state.incomingCalls.length) * SHELL_LAYOUT.callRowHeight : 0;
+  return state;
 }
 
 function show(): void {
@@ -121,7 +124,7 @@ function publish(): void {
   layoutWorkspaces();
   const state = snapshot();
   nativeShell?.update(state);
-  callPanel?.update(state, screenLocked, id => notifications.callPreview(id));
+  callPanel?.update(state, screenLocked);
   menuBar?.update(state);
   window.webContents.send('shell:state', state);
   const active = state.accounts.find(account => account.id === state.activeId);
@@ -136,7 +139,9 @@ function publish(): void {
 
 function layoutWorkspaces(): void {
   const width = nativeShell ? store.value.sidebarCollapsed ? SHELL_LAYOUT.railWidth : SHELL_LAYOUT.sidebarWidth : 224;
-  accounts.layout(store.value.activeId, overlay, width, nativeShell ? SHELL_LAYOUT.toolbarHeight : 64);
+  const rings = [...accounts.entries.values()].filter(entry => entry.state.ringing && entry.state.callId).length + (testCall?.phase === 'ringing' ? 1 : 0);
+  const shelf = nativeShell ? Math.min(SHELL_LAYOUT.callMaxRows, rings) * SHELL_LAYOUT.callRowHeight : 0;
+  accounts.layout(store.value.activeId, overlay, width, (nativeShell ? SHELL_LAYOUT.toolbarHeight : 64) + shelf);
 }
 
 function refreshMenus(): void {
@@ -161,7 +166,8 @@ function refreshMenus(): void {
       { type: 'separator' }, { label: 'Reload workspace', accelerator: 'CommandOrControl+R', enabled: !!store.value.activeId, click: () => { if (store.value.activeId) void accounts.reload(store.value.activeId); } },
       { label: 'Update all workspaces', accelerator: 'CommandOrControl+Shift+U', enabled: !!active && !webUpdates?.state().blocked && webUpdates?.state().phase === 'idle', click: () => {
         void command({ type: 'update-workspaces' }).catch(() => { void dialog.showMessageBox(window, { type: 'info', message: 'Workspaces could not update.', detail: 'Finish calls and reconnect offline workspaces, then try again.' }); });
-      } }
+      } },
+      { type: 'separator' }, { label: 'Close Window', role: 'close', accelerator: 'CommandOrControl+W' }
     ] },
     { role: 'editMenu' },
     { label: 'View', submenu: [
@@ -175,7 +181,11 @@ function refreshMenus(): void {
       { label: 'Activity', enabled: store.value.preferences.showMenuBar, accelerator: 'CommandOrControl+Shift+A', click: () => menuBar.open() }, { label: 'Show Switchboard', click: show }, { role: 'togglefullscreen' },
       ...(!app.isPackaged ? [{ label: 'Inspect workspace', accelerator: 'CommandOrControl+Alt+I', click: () => { const id = store.value.activeId; if (id) accounts.entries.get(id)?.view.webContents.openDevTools({ mode: 'detach' }); } }] : [])
     ] },
-    { role: 'windowMenu' },
+    { label: 'Window', role: 'windowMenu', submenu: [
+      { role: 'minimize', accelerator: 'CommandOrControl+M' }, { role: 'zoom' },
+      { type: 'separator' }, { label: 'Show Switchboard', accelerator: 'CommandOrControl+Shift+O', click: show },
+      { role: 'front' }
+    ] },
     { role: 'help', submenu: [
       { label: 'Project and documentation', click: () => { void shell.openExternal('https://github.com/ozeitis/quo-switchboard'); } },
       { label: 'Download updates…', click: () => { void shell.openExternal(releasesURL); } }
@@ -417,7 +427,7 @@ if (gotLock) void app.whenReady().then(async () => {
   if (NativeShell.enabled()) {
     const nativeCommand = (value: unknown) => { void enqueue(value).catch(error => { void dialog.showMessageBox(window, { type: 'error', message: 'Could not complete that action', detail: error instanceof Error ? error.message : 'Try again.' }); }); };
     nativeShell = new NativeShell(window, nativeCommand);
-    callPanel = new CallPanel(nativeCommand);
+    callPanel = new CallPanel(window, nativeCommand);
   }
   ipcMain.on('account:event', (event, raw: unknown) => {
     const entry = [...accounts.entries.values()].find(item => item.view.webContents === event.sender);
@@ -475,7 +485,7 @@ if (gotLock) void app.whenReady().then(async () => {
 
   nativeTheme.on('updated', () => { configureAppearances(); publish(); });
   for (const account of store.value.accounts) accounts.create(account);
-  window.on('resize', () => { layoutWorkspaces(); nativeShell?.update(snapshot()); });
+  window.on('resize', () => { layoutWorkspaces(); const state = snapshot(); nativeShell?.update(state); callPanel?.update(state, screenLocked); });
   window.on('close', event => { if (!quitting) { event.preventDefault(); window.hide(); } });
   powerMonitor.on('suspend', () => health.suspend());
   powerMonitor.on('resume', () => { health.resume(); accounts.resume(); });

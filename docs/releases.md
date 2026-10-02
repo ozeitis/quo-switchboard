@@ -8,6 +8,8 @@ The preview entitlement allows Electron's differently signed libraries to load. 
 
 Ad-hoc signing verifies local code integrity but does not prove publisher identity. It is not Apple notarization. A self-signed certificate likewise does not automatically make Gatekeeper trust a downloaded app. Preview installation may require the macOS **Open Anyway** flow.
 
+Ad-hoc signatures identify one particular build. A changed build can trigger another Keychain authorization request for Chromium's saved-cookie encryption key. This occurred during the local 0.5.0 upgrade; approving the system request restored both existing sign-ins. Do not disable cookie encryption or broaden Keychain access rules to avoid the prompt. Releases intended for dependable updates should preserve a stable signing identity and designated requirement. [Apple's code-signing requirements](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
+
 Current Electron uses macOS UserNotifications and requires signing for native notification delivery. Ad-hoc build behavior still needs verification on each supported macOS release. A real Developer ID identity and notarization are the proper distribution path when broad, frictionless installation is required.
 
 ## Build locally

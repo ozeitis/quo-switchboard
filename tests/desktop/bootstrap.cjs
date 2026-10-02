@@ -13,7 +13,7 @@ if (process.platform === 'darwin') {
   Object.defineProperty(bridge, 'statusUpdate', { value: json => { globalThis.nativeStatus = JSON.parse(json); native.statusUpdate(json); } });
   globalThis.nativeStatusInspect = () => JSON.parse(native.statusInspect());
   globalThis.nativeCallsInspect = () => JSON.parse(native.callsInspect());
-  Object.defineProperty(bridge, 'callsAttach', { value: callback => { globalThis.nativeCallAction = callback; native.callsAttach(callback); } });
+  Object.defineProperty(bridge, 'callsAttach', { value: (handle, callback) => { globalThis.nativeCallAction = callback; native.callsAttach(handle, callback); } });
   Object.defineProperty(bridge, 'environment', { value: () => ({ ...native.environment(), ...(typeof globalThis.fixtureReduceMotion === 'boolean' ? { reduceMotion: globalThis.fixtureReduceMotion } : {}) }) });
   require.cache[nativePath].exports = bridge;
 }

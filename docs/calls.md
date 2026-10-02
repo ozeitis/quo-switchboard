@@ -8,7 +8,11 @@ Switchboard already uses Apple's UserNotifications through Electron. The package
 
 The floating call panel is a separate AppKit `NSPanel`. It shows each recognized incoming call and workspace, including when the main window is closed or another workspace is selected. It does not activate Switchboard when it appears. Answer and Decline use the originating workspace's current controls. Answer opens that workspace automatically. Dismiss hides that call's card without declining it. Cancellation or answering elsewhere removes the card when Quo updates its interface. [Apple nonactivating panels](https://developer.apple.com/documentation/appkit/nswindow/stylemask-swift.struct/nonactivatingpanel).
 
+The main window also shows a native incoming-call strip above Quo, regardless of which workspace is selected. It reserves layout space rather than covering Quo's controls. Up to three rows fit before the strip scrolls. Both surfaces share the same source-bound commands and preview privacy. Turning desktop alerts off leaves the in-app controls available. Green Answer and red Decline controls retain their colors while the app is inactive; their white text has at least 4.5:1 contrast. Color accompanies text and SF Symbols, never replaces them.
+
 **Settings → General → Floating incoming call controls** enables the panel. Desktop notifications must also be enabled. Screen lock hides it. Hide caller and message previews also hides its caller text. A panel is application UI: it does not inherit Notification Center's Focus suppression. Disable floating controls if only system-managed alerts are wanted.
+
+The panel does not become the key window. Close Window (⌘W), Minimize (⌘M), Zoom, and Show Switchboard (⌘⇧O) remain main-window commands; native Settings keeps normal close behavior. Closing the main window leaves workspace connections and floating calls alive.
 
 ```mermaid
 sequenceDiagram

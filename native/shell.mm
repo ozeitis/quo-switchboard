@@ -372,7 +372,7 @@ static NSImage *themePreview(NSDictionary *colors) {
   CGFloat width = _host.bounds.size.width, height = _host.bounds.size.height;
   // Cut out the full page area, retaining only its top-left curve. The native
   // window owns the outer corners; no inset frame or remote-page CSS is needed.
-  CGFloat radius = [_layout[@"contentRadius"] doubleValue], top = height - toolbarHeight;
+  CGFloat radius = [_layout[@"contentRadius"] doubleValue], top = height - toolbarHeight - [snapshot[@"callShelfHeight"] doubleValue];
   CGFloat tangent = radius * 0.5522847498;
   CGMutablePathRef path = CGPathCreateMutable();
   CGPathAddRect(path, nil, CGRectMake(0, 0, width, height));

@@ -9,7 +9,7 @@ import { channels } from '../../src/shared/theme';
 interface NativeRecord { notification: NativeNotification; title: string; body: string; subtitle: string; actions: string[] }
 type MainGlobal = typeof globalThis & { notificationRecords: NativeRecord[]; externalOrigins: string[]; textMenus: { menu: NativeMenu; frameURL?: string }[]; nativeStatus: { items: { id: string; name: string; title: string }[]; accounts: import('../../src/shared/model').AccountState[]; activity: import('../../src/shared/model').ActivityItem[]; testCall?: import('../../src/shared/model').Snapshot['testCall'] }; nativeStatusAction: (json: string) => void; nativeStatusInspect: () => { id: string; title: string; image: string }[]; fixtureReduceMotion?: boolean };
 type CallPanelGlobal = typeof globalThis & {
-  nativeCallsInspect(): { visible: boolean; key: boolean; nonactivating: boolean; level: number; dismissed: number; cards: { id: string; callId: string; name: string; actions: string[]; title?: string; body?: string; busy: boolean }[] };
+  nativeCallsInspect(): { visible: boolean; key: boolean; nonactivating: boolean; level: number; dismissed: number; shelfVisible: boolean; shelfHeight: number; cards: { id: string; callId: string; name: string; actions: string[]; title?: string; body?: string; busy: boolean }[] };
   nativeCallAction(json: string): void;
   fixtureCallFailures?: number;
 };
@@ -389,7 +389,7 @@ test('the native rail resizes retained views and keeps unread and call routing w
   await command({ type: 'new-workspace' });
   await application.evaluate(() => (globalThis as MainGlobal).notificationRecords.at(-1)!.notification.emit('click'));
   await expect.poll(async () => (await snapshot()).activeId).toBe(before.accounts[0]!.id);
-  await expect.poll(() => studio.evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width: resized.size[0]! - 56, height: resized.size[1]! - 52 });
+  await expect.poll(() => studio.evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width: resized.size[0]! - 56, height: resized.size[1]! - 112 });
   expect((await snapshot()).sidebarCollapsed).toBe(true);
   expect((await snapshot()).accounts[0]!.ringing).toBe(true);
   expect((await snapshot()).accounts).toHaveLength(2);
@@ -906,17 +906,21 @@ test('the current Quo Accept dialog produces a persistent nonactivating panel an
   await studio.evaluate(() => document.getElementById('ring')!.click());
   await expect.poll(async () => (await callPanel()).cards.map(card => [card.name, card.actions])).toEqual([['Studio', ['answer', 'decline']]]);
   await expect.poll(async () => (await callPanel()).visible).toBe(true);
+  expect(await callPanel()).toMatchObject({ shelfVisible: true, shelfHeight: 60 });
+  expect(await application.evaluate(({ BrowserWindow, WebContentsView }) => BrowserWindow.getAllWindows()[0]!.contentView.children.filter(view => view instanceof WebContentsView && view.webContents.getURL().startsWith('https://my.quo.com')).map(view => view.getBounds().y))).toEqual([112, 112]);
   expect(await callPanel()).toMatchObject({ nonactivating: true, key: false });
   expect((await stateSnapshot()).activeId).toBe(ids[1]);
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
   expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(false);
   expect((await callPanel()).visible).toBe(true);
+  expect((await callPanel()).shelfVisible).toBe(false);
   const stale = (await callPanel()).cards[0]!;
   await panelAction({ id: stale.id, callId: stale.callId }, 'answer');
   await expect.poll(() => studio.evaluate(() => document.body.dataset.answered)).toBe('yes');
   expect(await workshop.evaluate(() => document.body.dataset.answered)).toBeUndefined();
   expect((await stateSnapshot()).activeId).toBe(ids[0]);
   await expect.poll(async () => (await callPanel()).visible).toBe(false);
+  expect((await callPanel()).shelfHeight).toBe(0);
   expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(true);
   await studio.getByRole('button', { name: 'End call' }).click();
   await studio.evaluate(() => { delete document.body.dataset.answered; document.getElementById('ring')!.click(); });
@@ -942,12 +946,14 @@ test('call panels honor privacy, screen lock, preferences, cancellation, and dis
   expect((await callPanel()).cards[0]).not.toHaveProperty('title');
   await application.evaluate(({ powerMonitor }) => powerMonitor.emit('lock-screen'));
   expect((await callPanel()).visible).toBe(false);
+  expect((await callPanel()).shelfVisible).toBe(false);
   await application.evaluate(({ powerMonitor }) => powerMonitor.emit('unlock-screen'));
   expect((await callPanel()).visible).toBe(true);
   await shellCommand({ type: 'preferences', preferences: { ...preferences, floatingCalls: false } });
   expect((await callPanel()).visible).toBe(false);
   await shellCommand({ type: 'preferences', preferences: { ...preferences, notifications: false } });
   expect((await callPanel()).visible).toBe(false);
+  expect((await callPanel()).shelfVisible).toBe(true);
   await shellCommand({ type: 'preferences', preferences });
   expect((await callPanel()).visible).toBe(true);
   await page.evaluate(() => document.querySelector('#call button:last-child')!.setAttribute('disabled', ''));
@@ -963,6 +969,7 @@ test('native call cards stay distinct across workspaces, block busy Answer, and 
   const studio = await addNative('Studio'); const workshop = await addNative('Workshop');
   await studio.evaluate(() => document.getElementById('ring')!.click()); await workshop.evaluate(() => document.getElementById('ring')!.click());
   await expect.poll(async () => (await callPanel()).cards.map(card => card.name)).toEqual(['Studio', 'Workshop']);
+  expect((await callPanel()).shelfHeight).toBe(120);
   const first = (await callPanel()).cards[0]!; await panelAction({ id: first.id, callId: first.callId }, 'answer');
   await expect.poll(async () => (await callPanel()).cards.map(card => [card.name, card.busy])).toEqual([['Workshop', true]]);
   await application.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false }); });
@@ -983,6 +990,32 @@ test('native call cards stay distinct across workspaces, block busy Answer, and 
   await expect.poll(async () => (await callPanel()).cards[0]?.busy).toBe(false);
   await panelAction({ id: second.id, callId: second.callId }, 'decline');
   await expect.poll(async () => (await callPanel()).visible).toBe(false);
+});
+
+test('standard window commands hide and restore the main window while incoming calls remain actionable', async () => {
+  await application.close(); await launch(dataDirectory, false, true, currentQuoCallFixture);
+  const studio = await addNative('Studio'); await addNative('Workshop');
+  await studio.evaluate(() => document.getElementById('ring')!.click());
+  await expect.poll(async () => (await callPanel()).shelfVisible).toBe(true);
+  const menu = await application.evaluate(({ Menu }) => {
+    const menu = Menu.getApplicationMenu()!;
+    return { close: menu.items.find(item => item.label === 'Workspace')!.submenu!.items.find(item => item.role === 'close')!.accelerator,
+      window: menu.items.find(item => item.role?.toLowerCase() === 'windowmenu')!.submenu!.items.filter(item => item.role).map(item => item.role) };
+  });
+  expect(menu.close).toBe('CommandOrControl+W');
+  expect(menu.window).toEqual(['minimize', 'zoom', 'front']);
+  await application.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0]!.focus(); });
+  await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isFocused())).toBe(true);
+  await application.evaluate(({ Menu }) => Menu.sendActionToFirstResponder('performClose:'));
+  await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(false);
+  expect((await callPanel()).visible).toBe(true);
+  await shellCommand({ type: 'show' });
+  expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(true);
+  expect((await callPanel()).shelfVisible).toBe(true);
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.minimize());
+  await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isMinimized())).toBe(true);
+  await shellCommand({ type: 'show' });
+  expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isMinimized())).toBe(false);
 });
 
 

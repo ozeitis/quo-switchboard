@@ -47,6 +47,10 @@ export interface AccountState extends Account {
   webUpdateId?: string;
 }
 export interface WebUpdateState { count: number; phase: 'idle' | 'checking' | 'applying'; blocked: boolean; error?: string }
+export interface IncomingCallCard {
+  id: string; callId: string; name: string; color: string; accent?: string;
+  actions: CallAction[]; busy: boolean; title?: string; body?: string; simulation?: boolean;
+}
 export interface Snapshot {
   nativeShell?: boolean;
   sidebarCollapsed?: boolean;
@@ -60,6 +64,8 @@ export interface Snapshot {
   activity?: ActivityItem[];
   webUpdates?: WebUpdateState;
   testCall?: { id: string; workspaceId: string; phase: CallPhase; muted: boolean };
+  incomingCalls?: IncomingCallCard[];
+  callShelfHeight?: number;
   appearance?: AppearanceOptions;
   themeCatalog?: { id: string; name: string; colors: AppearanceOptions['resolved']['colors'] }[];
 }

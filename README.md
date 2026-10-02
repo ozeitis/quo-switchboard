@@ -17,6 +17,7 @@ Switchboard gives each workspace its own saved browser session and keeps them ru
 - Collapse the sidebar to an icon rail with **⌘⇧L**. Unread counts and call indicators stay visible.
 - See which workspace sent a desktop notification. Click to open that workspace.
 - Answer or decline recognized calls from a persistent native floating panel. Answer opens the source workspace automatically, even when the main window was closed.
+- See incoming calls from every workspace in a native strip above Quo. Close with **⌘W**, minimize with **⌘M**, and reopen with **⌘⇧O**; background calls keep running.
 - Open a native activity popover from one compact menu-bar icon or **⌘⇧A**. See every workspace, observed unread counts, current calls, and recent Quo alerts. Separate workspace icons and visible counts are optional.
 - See incoming, active, held, and other observable call states in the rail and menu bar. Incoming calls pulse gently; Reduce Motion stops animation.
 - Choose a workspace palette, custom accent, and light/dark appearance in a native theme picker. Quo’s shared surfaces and menus inherit it.
