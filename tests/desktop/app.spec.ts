@@ -684,6 +684,12 @@ test('call status distinguishes hold and mute actions from states and ignores hi
 
 test('separate menu-bar items keep individual counts and source actions, animate ringing, and clean up on layout changes', async () => {
   await application.close(); await launch(dataDirectory, false, true, themeFixture);
+  // Exercise animation independently of the runner's accessibility settings.
+  await application.evaluate(({ nativeTheme }) => {
+    (globalThis as MainGlobal).fixtureReduceMotion = false;
+    nativeTheme.emit('updated');
+  });
+  await expect.poll(async () => (await stateSnapshot()).appearance!.reduceMotion).toBe(false);
   const studio=await addNative('Studio'); const workshop=await addNative('Workshop');
   const ids=(await stateSnapshot()).accounts.map(account=>account.id);
   const preferencesAtStart = (await stateSnapshot()).preferences;
@@ -696,9 +702,14 @@ test('separate menu-bar items keep individual counts and source actions, animate
   await shellCommand({ type: 'select', id: ids[0] });
   await workshop.evaluate(()=>document.getElementById('ring')!.click());
   await expect.poll(async()=> (await trays()).find(item=>item.name==='Workshop')!.state?.ringing).toBe(true);
-  const frames=new Set<string>(); const still=new Set<string>();
-  for(let i=0;i<6;i++){const items=await trays();frames.add(items.find(item=>item.name==='Workshop')!.image);still.add(items.find(item=>item.name==='Studio')!.image);await window.waitForTimeout(240);}
-  expect(frames.size).toBe(2);expect(still.size).toBe(1);
+  const frames = new Set<string>(); const still = new Set<string>();
+  await expect.poll(async () => {
+    const items = await trays();
+    frames.add(items.find(item => item.name === 'Workshop')!.image);
+    still.add(items.find(item => item.name === 'Studio')!.image);
+    return frames.size;
+  }, { intervals: [150], timeout: 5_000 }).toBe(2);
+  expect(still.size).toBe(1);
   const preferences=(await stateSnapshot()).preferences;
   await shellCommand({type:'preferences',preferences:{...preferences,animateActivity:false}});
   const fixed=(await trays()).find(item=>item.name==='Workshop')!.image;await window.waitForTimeout(750);expect((await trays()).find(item=>item.name==='Workshop')!.image).toBe(fixed);
