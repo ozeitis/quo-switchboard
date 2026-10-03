@@ -48,6 +48,27 @@ if (current.protected) {
     required_conversation_resolution: true
   });
 }
+const rulesetName = 'Switchboard dependency checks';
+const rulesets = api(`${endpoint}/rulesets?per_page=100`).filter(rule => rule.name === rulesetName && rule.source === nameWithOwner);
+assert(rulesets.length <= 1, 'Multiple dependency rulesets need review.');
+if (rulesets.length) {
+  const ruleset = api(`${endpoint}/rulesets/${rulesets[0].id}`);
+  const refs = ruleset.conditions?.ref_name;
+  assert(ruleset.target === 'branch' && ruleset.enforcement === 'active' &&
+    Array.isArray(ruleset.bypass_actors) && ruleset.bypass_actors.length === 0 &&
+    Array.isArray(refs?.include) && refs.include.length === 1 && refs.include[0] === '~DEFAULT_BRANCH' &&
+    Array.isArray(refs.exclude) && refs.exclude.length === 0 &&
+    policy.hasStrictRules(ruleset.rules), 'Existing dependency ruleset needs review. Setup will not weaken it.');
+} else {
+  api(`${endpoint}/rulesets`, 'POST', {
+    name: rulesetName, target: 'branch', enforcement: 'active', bypass_actors: [],
+    conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } },
+    rules: [{ type: 'required_status_checks', parameters: {
+      strict_required_status_checks_policy: true,
+      required_status_checks: policy.requiredChecks.map(context => ({ context, integration_id: 15368 }))
+    } }]
+  });
+}
 api(`${endpoint}/vulnerability-alerts`, 'PUT');
 api(`${endpoint}/automated-security-fixes`, 'PUT');
 api(endpoint, 'PATCH', { allow_auto_merge: true, allow_squash_merge: true, delete_branch_on_merge: true });
