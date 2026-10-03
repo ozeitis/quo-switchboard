@@ -21,6 +21,20 @@ function hasRequiredProtection(rule) {
       rule.requiredStatusChecks?.some(check => check.context === name && check.app?.databaseId === actionsAppId));
 }
 
+function hasRequiredBranchChecks(branch) {
+  const checks = branch?.protection?.required_status_checks;
+  return branch?.protected === true && branch.protection.enabled === true &&
+    checks?.enforcement_level === 'everyone' && requiredChecks.every(name =>
+      checks.checks?.some(check => check.context === name && check.app_id === actionsAppId));
+}
+
+function hasStrictRules(rules) {
+  return Array.isArray(rules) && rules.some(rule => rule.type === 'required_status_checks' &&
+    rule.parameters?.strict_required_status_checks_policy === true && requiredChecks.every(name =>
+      rule.parameters.required_status_checks?.some(check =>
+        check.context === name && check.integration_id === actionsAppId)));
+}
+
 function isDependencyManifest(before, after) {
   for (const key of dependencyKeys) {
     const oldDependencies = before[key] ?? {};
@@ -52,19 +66,20 @@ async function mergeDependencyUpdates({ github, context, core }) {
   const { data: settings } = await github.rest.repos.get(repo);
   const repository = settings.full_name;
   const branch = settings.default_branch;
-  const { repository: protectedRepo } = await github.graphql(`
-    query($owner: String!, $repo: String!) {
-      repository(owner: $owner, name: $repo) {
-        defaultBranchRef { branchProtectionRule {
-          isAdminEnforced requiresStatusChecks requiresStrictStatusChecks
-          requiredStatusChecks { context app { databaseId } }
-        } }
-      }
-    }`, repo);
+  // Applied rules need only Metadata access; classic rule details need Administration.
+  const protection = async () => {
+    const { data: base } = await github.rest.repos.getBranch({ ...repo, branch });
+    const rules = await github.paginate(github.rest.repos.getBranchRules, { ...repo, branch, per_page: 100 });
+    if (!hasRequiredBranchChecks(base) || !hasStrictRules(rules)) {
+      throw new Error('Dependency merges require strict main protection with audit, secrets, and test from GitHub Actions. Run scripts/configure-maintenance.mjs after deployment.');
+    }
+    return base;
+  };
   if (!settings.allow_auto_merge || !settings.allow_squash_merge ||
-      !hasRequiredProtection(protectedRepo.defaultBranchRef?.branchProtectionRule)) {
+      !settings.default_branch) {
     throw new Error('Dependency merges require strict main protection with audit, secrets, and test from GitHub Actions. Run scripts/configure-maintenance.mjs after deployment.');
   }
+  await protection();
 
   const candidates = await github.paginate(github.rest.pulls.list, { ...repo, state: 'open', base: branch, per_page: 100 });
   const readFile = async (path, ref) => {
@@ -102,7 +117,7 @@ async function mergeDependencyUpdates({ github, context, core }) {
       { ...repo, run_id: run.id, filter: 'latest', per_page: 100 });
     if (!passedChecks(run, jobs, pr.head.sha)) { core.info(`PR #${pr.number} is waiting for passing checks.`); continue; }
 
-    const { data: base } = await github.rest.repos.getBranch({ ...repo, branch });
+    const base = await protection();
     const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({ ...repo,
       basehead: `${base.commit.sha}...${pr.head.sha}` });
     if (comparison.status !== 'ahead') { core.info(`PR #${pr.number} needs to be rebased and tested again.`); continue; }
@@ -122,5 +137,5 @@ async function mergeDependencyUpdates({ github, context, core }) {
   }
 }
 
-module.exports = { requiredChecks, isDependencyPullRequest, hasRequiredProtection,
+module.exports = { requiredChecks, isDependencyPullRequest, hasRequiredProtection, hasRequiredBranchChecks, hasStrictRules,
   isDependencyManifest, isActionVersionUpdate, passedChecks, mergeDependencyUpdates };

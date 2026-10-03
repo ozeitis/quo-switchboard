@@ -8,6 +8,13 @@ const repository = 'owner/app';
 const sha = '1'.repeat(40);
 const rule = { requiresStatusChecks: true, requiresStrictStatusChecks: true, isAdminEnforced: true,
   requiredStatusChecks: policy.requiredChecks.map(context => ({ context, app: { databaseId: 15368 } })) };
+const branch = { protected: true, protection: { enabled: true, required_status_checks: {
+  enforcement_level: 'everyone', checks: policy.requiredChecks.map(context => ({ context, app_id: 15368 }))
+} }, commit: { sha: '0'.repeat(40) } };
+const rules = [{ type: 'required_status_checks', parameters: {
+  strict_required_status_checks_policy: true,
+  required_status_checks: policy.requiredChecks.map(context => ({ context, integration_id: 15368 }))
+} }];
 const pr = { number: 1, state: 'open', draft: false, changed_files: 1, mergeable_state: 'clean',
   user: { login: 'dependabot[bot]', type: 'Bot' },
   base: { ref: 'main', sha: '0'.repeat(40), repo: { full_name: repository } },
@@ -30,6 +37,22 @@ test('protection must enforce all checks, strict freshness, and admins', () => {
     { ...rule, requiredStatusChecks: rule.requiredStatusChecks.slice(1) },
     { ...rule, requiredStatusChecks: policy.requiredChecks.map(context => ({ context, app: null })) }]) {
     assert.equal(Boolean(policy.hasRequiredProtection(changed)), false);
+  }
+});
+
+test('readable REST summaries require admin enforcement and strict app-bound applied rules', () => {
+  assert.equal(policy.hasRequiredBranchChecks(branch), true);
+  assert.equal(policy.hasStrictRules(rules), true);
+  for (const changed of [undefined, { ...branch, protected: false }, { ...branch, protection: {
+    ...branch.protection, required_status_checks: { ...branch.protection.required_status_checks, enforcement_level: 'non_admins' }
+  } }, { ...branch, protection: { ...branch.protection, required_status_checks: {
+    ...branch.protection.required_status_checks, checks: policy.requiredChecks.map(context => ({ context, app_id: null }))
+  } } }]) assert.equal(Boolean(policy.hasRequiredBranchChecks(changed)), false);
+  for (const changed of [undefined, [], [{ ...rules[0], parameters: {
+    ...rules[0].parameters, strict_required_status_checks_policy: false
+  } }], [{ ...rules[0], parameters: { ...rules[0].parameters, required_status_checks: rules[0].parameters.required_status_checks.slice(1) } }],
+    [{ ...rules[0], parameters: { ...rules[0].parameters, required_status_checks: policy.requiredChecks.map(context => ({ context })) } }]]) {
+    assert.equal(Boolean(policy.hasStrictRules(changed)), false);
   }
 });
 
@@ -68,12 +91,12 @@ function fixture(change = {}) {
   const notices = [];
   let reads = 0;
   const github = {
-    graphql: async () => ({ repository: { defaultBranchRef: { branchProtectionRule: change.rule ?? rule } } }),
     paginate: async (method, args) => method(args),
     rest: {
       repos: {
         get: async () => ({ data: { full_name: repository, default_branch: 'main', allow_auto_merge: true, allow_squash_merge: true } }),
-        getBranch: async () => ({ data: { commit: { sha: '0'.repeat(40) } } }),
+        getBranch: async () => ({ data: change.branch ?? branch }),
+        getBranchRules: async () => change.rules ?? rules,
         compareCommitsWithBasehead: async () => ({ data: { status: change.behind ? 'diverged' : 'ahead' } })
       },
       pulls: {
@@ -109,9 +132,20 @@ test('scope violations, pending reruns, stale bases, and changed heads leave PRs
     await policy.mergeDependencyUpdates(state);
     assert.equal(state.merges.length, 0);
   }
-  const state = fixture({ rule: { ...rule, isAdminEnforced: false } });
+  const state = fixture({ branch: { ...branch, protected: false } });
   await assert.rejects(policy.mergeDependencyUpdates(state), /strict main protection/);
   assert.equal(state.merges.length, 0);
+});
+
+test('inaccessible or missing applied rules fail closed without an administration-token fallback', async () => {
+  for (const missing of [false, true]) {
+    const state = fixture({ rules: [] });
+    if (!missing) state.github.rest.repos.getBranchRules = async () => {
+      throw Object.assign(new Error('Resource not accessible by integration'), { status: 403 });
+    };
+    await assert.rejects(policy.mergeDependencyUpdates(state));
+    assert.equal(state.merges.length, 0);
+  }
 });
 
 test('a merge race rejected by GitHub is not reported as a successful merge', async () => {
