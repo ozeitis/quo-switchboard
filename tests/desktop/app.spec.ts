@@ -918,6 +918,11 @@ const currentQuoCallFixture = fixture.replace("area.innerHTML = '<button aria-la
 const callPanel = () => application.evaluate(() => (globalThis as CallPanelGlobal).nativeCallsInspect());
 const focusMain = async () => {
   await application.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0]!.focus(); });
+  await expect.poll(() => application.evaluate(({ BrowserWindow }) => {
+    const main = BrowserWindow.getAllWindows()[0]!;
+    const calls = (globalThis as CallPanelGlobal).nativeCallsInspect();
+    return main.isVisible() && !main.isMinimized() && (main.isFocused() || (calls.sheetVisible && calls.key));
+  })).toBe(true);
 };
 const panelAction = (card: { id: string; callId: string }, action: string) => application.evaluate((_electron, value) => (globalThis as CallPanelGlobal).nativeCallAction(JSON.stringify(value)), { type: 'call-action', ...card, action });
 
@@ -972,6 +977,7 @@ test('call panels honor privacy, screen lock, preferences, cancellation, and dis
   expect((await callPanel()).visible).toBe(false);
   expect((await callPanel()).sheetVisible).toBe(false);
   await application.evaluate(({ powerMonitor }) => powerMonitor.emit('unlock-screen'));
+  await focusMain();
   expect((await callPanel()).visible).toBe(true);
   await shellCommand({ type: 'preferences', preferences: { ...preferences, floatingCalls: false } });
   await expect.poll(async () => (await callPanel()).presentation).toBe('sheet');
@@ -1027,7 +1033,7 @@ test('standard window commands hide and restore the main window while incoming c
   });
   expect(menu.close).toBe('CommandOrControl+W');
   expect(menu.window).toEqual(['minimize', 'zoom', 'front']);
-  await application.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0]!.focus(); });
+  await focusMain();
   await expect.poll(async () => (await callPanel()).presentation).toBe('sheet');
   await application.evaluate(({ Menu }) => { const item = Menu.getApplicationMenu()!.items.find(item => item.label === 'Workspace')!.submenu!.items.find(item => item.label === 'Close Window')!; item.click(); });
   await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(false);
