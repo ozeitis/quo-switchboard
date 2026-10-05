@@ -2,6 +2,8 @@
 
 Dependabot checks npm and GitHub Actions at 9 a.m. America/Los_Angeles every calendar day. Routine npm updates and security fixes use separate groups. Major versions are included. Security-fix PRs can arrive sooner when GitHub detects an advisory.
 
+Routine version updates use GitHub's default three-day release cooldown; security updates do not. npm version updates maintain direct dependencies. If an indirect dependency has an available update before GitHub recognizes a usable security fix, it needs a separate reviewed PR and the same required checks. A successful Dependabot run does not establish that the current lockfile passes the security audit.
+
 `Checks` also runs every day at 16:23 UTC. It includes Mac type, unit, and desktop tests; a full-history secret scan; and `npm audit --audit-level=low`. The audit includes development dependencies because Electron and bundled libraries live there. Installation scripts are disabled in the audit job. An unavailable advisory service fails the check.
 
 After successful checks, `Dependency maintenance` squash-merges qualifying Dependabot PRs. A daily retry runs at 16:43 UTC. Only dependency versions in existing npm manifests and lockfiles, or pinned action references in existing workflows, qualify. Manifest scripts, application code, new packages, unpinned actions, and changed workflow logic need review.
