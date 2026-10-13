@@ -23,10 +23,10 @@
     "dist": "npm run build && electron-builder --mac dmg zip --publish never"
   },
   "devDependencies": {
-    "@playwright/test": "1.63.0",
-    "@types/node": "26.6.4",
+    "@playwright/test": "1.64.0",
+    "@types/node": "26.6.5",
     "colorjs.io": "0.7.1",
-    "electron": "44.5.1",
+    "electron": "44.7.0",
     "electron-builder": "26.15.3",
     "esbuild": "0.28.2",
     "node-api-headers": "1.9.0",
